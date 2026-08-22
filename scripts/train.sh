@@ -4,21 +4,28 @@ set -euo pipefail
 SEEDS="${SEEDS:-0,1,2,3,4}"
 RESULTS_ROOT="${RESULTS_ROOT:-results}"
 BUDGET_MODE="${BUDGET_MODE:-fair}"
-RUN_MODE="${RUN_MODE:-split}"
+RUN_MODE="${RUN_MODE:-single}"
 
-WORKERS="${WORKERS:-2}"
-DEVICE="${DEVICE:-cuda}"
+WORKERS="${WORKERS:-16}"
+DEVICE="${DEVICE:-cpu}"
 
-GPU_ENVS="${GPU_ENVS:-distribution}"
+GPU_ENVS="${GPU_ENVS:-}"
 GPU_DEVICE="${GPU_DEVICE:-cuda}"
-GPU_WORKERS="${GPU_WORKERS:-2}"
+GPU_WORKERS="${GPU_WORKERS:-1}"
 
-CPU_ENVS="${CPU_ENVS:-twostate cybersecurity advertising lq portfolio}"
+CPU_ENVS="${CPU_ENVS:-twostate cybersecurity distribution advertising lq portfolio}"
 CPU_DEVICE="${CPU_DEVICE:-cpu}"
-CPU_WORKERS="${CPU_WORKERS:-14}"
+CPU_WORKERS="${CPU_WORKERS:-16}"
 
 OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OMP_NUM_THREADS
+
+AUTO_WORKERS="${AUTO_WORKERS:-0}"
+MIN_WORKERS="${MIN_WORKERS:-1}"
+TARGET_CPU="${TARGET_CPU:-90}"
+TARGET_GPU="${TARGET_GPU:-}"
+MIN_FREE_MEMORY_GB="${MIN_FREE_MEMORY_GB:-6}"
+SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-15}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
@@ -34,6 +41,20 @@ common_args=(
 
 if [[ -n "${LOGS_ROOT:-}" ]]; then
   common_args+=(--logs-root "${LOGS_ROOT}")
+fi
+
+if [[ "${AUTO_WORKERS}" == "1" ]]; then
+  common_args+=(
+    --auto-workers
+    --min-workers "${MIN_WORKERS}"
+    --target-cpu "${TARGET_CPU}"
+    --min-free-memory-gb "${MIN_FREE_MEMORY_GB}"
+    --sample-interval "${SAMPLE_INTERVAL}"
+  )
+
+  if [[ -n "${TARGET_GPU}" ]]; then
+    common_args+=(--target-gpu "${TARGET_GPU}")
+  fi
 fi
 
 run_env() {

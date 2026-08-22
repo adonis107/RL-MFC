@@ -3,7 +3,8 @@ import json
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +40,12 @@ def parse_args():
     parser.add_argument("--jobs-file", type=Path, default=None)
     parser.add_argument("--logs-root", type=Path, default=None)
     parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--auto-workers", action="store_true")
+    parser.add_argument("--min-workers", type=int, default=1)
+    parser.add_argument("--target-cpu", type=float, default=90.0)
+    parser.add_argument("--target-gpu", type=float, default=None)
+    parser.add_argument("--min-free-memory-gb", type=float, default=6.0)
+    parser.add_argument("--sample-interval", type=float, default=15.0)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -166,6 +173,124 @@ def run_pending(pending, workers):
         raise RuntimeError(f"{len(failures)} job(s) failed; see per-job logs above.")
 
 
+def read_cpu_times():
+    with Path("/proc/stat").open("r", encoding="utf-8") as file:
+        fields = file.readline().split()[1:]
+    values = [int(value) for value in fields]
+    idle = values[3] + values[4]
+    total = sum(values)
+    return idle, total
+
+
+def cpu_percent(previous, current):
+    previous_idle, previous_total = previous
+    current_idle, current_total = current
+    total_delta = current_total - previous_total
+    if total_delta <= 0:
+        return 0.0
+    idle_delta = current_idle - previous_idle
+    return max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta)))
+
+
+def available_memory_gb():
+    with Path("/proc/meminfo").open("r", encoding="utf-8") as file:
+        for line in file:
+            if line.startswith("MemAvailable:"):
+                return float(line.split()[1]) / 1024.0 / 1024.0
+    return float("inf")
+
+
+def gpu_percent():
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    values = [float(line.strip()) for line in result.stdout.splitlines() if line.strip()]
+    return max(values) if values else None
+
+
+def print_failures(failures):
+    if not failures:
+        return
+    print("\nFailed jobs:", flush=True)
+    for record, error in failures:
+        print(f"- {record['output_dir']} ({record['log_path']}): {error}", flush=True)
+
+
+def run_pending_adaptive(pending, args):
+    print_lock = threading.Lock()
+    queue = deque((index, record) for index, record in enumerate(pending, start=1))
+    failures = []
+    active_limit = min(args.min_workers, args.workers, len(pending))
+    previous_cpu_times = read_cpu_times()
+
+    def submit_until_limit(executor, futures):
+        while queue and len(futures) < active_limit:
+            index, record = queue.popleft()
+            future = executor.submit(run_record, record, index, len(pending), print_lock)
+            futures[future] = record
+
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {}
+        submit_until_limit(executor, futures)
+        while futures:
+            done, _ = wait(futures, timeout=args.sample_interval, return_when=FIRST_COMPLETED)
+            for future in done:
+                record = futures.pop(future)
+                try:
+                    future.result()
+                except Exception as error:
+                    failures.append((record, error))
+                    with print_lock:
+                        print(f"FAILED {record['output_dir']} ({record['log_path']}): {error}", flush=True)
+
+            current_cpu_times = read_cpu_times()
+            current_cpu = cpu_percent(previous_cpu_times, current_cpu_times)
+            previous_cpu_times = current_cpu_times
+            current_memory = available_memory_gb()
+            current_gpu = gpu_percent() if args.target_gpu is not None else None
+
+            memory_ok = current_memory >= args.min_free_memory_gb
+            cpu_low = current_cpu < args.target_cpu
+            gpu_low = args.target_gpu is None or current_gpu is None or current_gpu < args.target_gpu
+            can_grow = queue and active_limit < args.workers and memory_ok and cpu_low and gpu_low
+            should_shrink = (
+                active_limit > args.min_workers
+                and (not memory_ok or current_cpu > args.target_cpu + 5.0)
+            )
+
+            if can_grow:
+                active_limit += 1
+            elif should_shrink:
+                active_limit -= 1
+
+            with print_lock:
+                gpu_text = "n/a" if current_gpu is None else f"{current_gpu:.1f}%"
+                print(
+                    "adaptive "
+                    f"active={len(futures)} limit={active_limit}/{args.workers} "
+                    f"queued={len(queue)} cpu={current_cpu:.1f}% gpu={gpu_text} "
+                    f"mem_avail={current_memory:.1f}GB",
+                    flush=True,
+                )
+
+            submit_until_limit(executor, futures)
+
+    if failures:
+        print_failures(failures)
+        raise RuntimeError(f"{len(failures)} job(s) failed; see per-job logs above.")
+
+
 def main():
     args = parse_args()
     normalize_paths(args)
@@ -173,6 +298,10 @@ def main():
         raise ValueError("Use at most one of --baseline and --no-baseline.")
     if args.workers < 1:
         raise ValueError("--workers must be at least 1.")
+    if args.min_workers < 1:
+        raise ValueError("--min-workers must be at least 1.")
+    if args.min_workers > args.workers:
+        raise ValueError("--min-workers must be less than or equal to --workers.")
 
     records = build_records(args)
     if not records:
@@ -190,6 +319,14 @@ def main():
     print(f"Completed jobs skipped: {len(completed) if resume else 0}")
     print(f"Pending jobs: {len(pending)}")
     print(f"Workers: {args.workers}")
+    if args.auto_workers:
+        print(
+            "Adaptive workers: "
+            f"min={args.min_workers}, target_cpu={args.target_cpu:g}%, "
+            f"target_gpu={args.target_gpu if args.target_gpu is not None else 'off'}, "
+            f"min_free_memory_gb={args.min_free_memory_gb:g}",
+            flush=True,
+        )
 
     if args.dry_run:
         return
@@ -197,7 +334,10 @@ def main():
         print("Nothing to run; every job already has summary.json.")
         return
 
-    run_pending(pending, args.workers)
+    if args.auto_workers:
+        run_pending_adaptive(pending, args)
+    else:
+        run_pending(pending, args.workers)
 
 
 if __name__ == "__main__":

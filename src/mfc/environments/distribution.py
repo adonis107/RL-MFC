@@ -9,7 +9,8 @@ class DistributionConfig:
     T: int = 5
     T_val: int = 5
     gamma: float = 1.0
-    n_train: int = 100_000
+    # Reduced after convergence checks for the configured epsilon/lambda grid.
+    n_train: int = 30_000
     lr: float = 1e-4
     n_particles: int = 500
     n_logit_gradient: int = 10
