@@ -25,4 +25,10 @@ Generate plots and diagnostic tables from a results directory:
 uv run python scripts/plot.py --env all --results-root results --output-root results/plots
 ```
 
+For low-SNR Portfolio gradient diagnostics, raise the diagnostic particle count without changing the training budget:
+
+```bash
+uv run python scripts/plot.py --env portfolio --results-root results --output-root results/plots --gradient-replications 20 --gradient-particles 8192
+```
+
 Generated experiment outputs are written under `results/` by default.

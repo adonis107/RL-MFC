@@ -7,6 +7,21 @@ from .flows import final_policy_probabilities, learned_flow
 from .io import load_env_and_policy, validation_dataframe
 
 
+def use_symlog_validation_axis(ax, values, threshold_ratio=1_000.0):
+    finite = pd.Series(values, dtype="float64").dropna()
+    finite = finite[(finite != float("inf")) & (finite != float("-inf"))]
+    magnitudes = finite.abs()
+    magnitudes = magnitudes[magnitudes > 0]
+    if magnitudes.empty:
+        return False
+
+    if magnitudes.max() / magnitudes.min() < threshold_ratio:
+        return False
+
+    ax.set_yscale("symlog", linthresh=max(1.0, float(magnitudes.min())))
+    return True
+
+
 def plot_validation_rewards(runs, env=None, horizon=None, flow=None, ax=None, save_path=None):
     df = validation_dataframe(runs)
     if env is not None:
@@ -48,6 +63,8 @@ def plot_validation_rewards(runs, env=None, horizon=None, flow=None, ax=None, sa
 
     ax.set_xlabel("training step")
     ax.set_ylabel("validation reward")
+    if env == "lq":
+        use_symlog_validation_axis(ax, df["validation_reward"])
     ax.legend(frameon=False)
     ax.grid(alpha=0.25)
     if save_path is not None:

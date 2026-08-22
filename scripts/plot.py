@@ -37,10 +37,23 @@ def save_current(path):
     plt.close()
 
 
-def make_standard_outputs(env, results_root, output_root, gradient_replications=0, correction_replications=0):
+def make_standard_outputs(
+    env,
+    results_root,
+    output_root,
+    gradient_replications=0,
+    correction_replications=0,
+    gradient_particles=None,
+    correction_particles=None,
+    allow_empty=False,
+):
     runs = load_runs(results_root, env=env)
     if not runs:
-        raise ValueError(f"No runs found under {Path(results_root) / env}.")
+        message = f"No runs found under {Path(results_root) / env}."
+        if allow_empty:
+            print(f"warning: {message}", file=sys.stderr)
+            return False
+        raise ValueError(message)
 
     output_dir = Path(output_root) / env
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +100,13 @@ def make_standard_outputs(env, results_root, output_root, gradient_replications=
         rows = []
         for run in runs:
             try:
-                rows.append(gradient_diagnostics(run, n_replications=gradient_replications))
+                rows.append(
+                    gradient_diagnostics(
+                        run,
+                        n_replications=gradient_replications,
+                        n_particles=gradient_particles,
+                    )
+                )
             except ValueError:
                 continue
         if rows:
@@ -97,11 +116,18 @@ def make_standard_outputs(env, results_root, output_root, gradient_replications=
         rows = []
         for run in runs:
             try:
-                rows.append(transport_correction_table(run, n_replications=correction_replications))
+                rows.append(
+                    transport_correction_table(
+                        run,
+                        n_replications=correction_replications,
+                        n_particles=correction_particles,
+                    )
+                )
             except ValueError:
                 continue
         if rows:
             save_table(pd.concat(rows, ignore_index=True), output_dir / "transport_correction.csv")
+    return True
 
 
 def parse_args():
@@ -115,6 +141,8 @@ def parse_args():
     parser.add_argument("--output-root", default="results/figures")
     parser.add_argument("--gradient-replications", type=int, default=0)
     parser.add_argument("--correction-replications", type=int, default=0)
+    parser.add_argument("--gradient-particles", type=int, default=None)
+    parser.add_argument("--correction-particles", type=int, default=None)
     return parser.parse_args()
 
 
@@ -129,6 +157,9 @@ def main():
             args.output_root,
             args.gradient_replications,
             args.correction_replications,
+            args.gradient_particles,
+            args.correction_particles,
+            allow_empty=args.env == "all",
         )
 
 

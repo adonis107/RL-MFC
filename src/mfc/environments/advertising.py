@@ -6,7 +6,7 @@ from torch import nn
 @dataclass(frozen=True)
 class AdvertisingConfig:
     eta: float = 0.2
-    ad_cost: float = 0.1
+    ad_cost: float = 0.2
     gamma: float = 0.9
     hidden_width: int = 32
     T: int = 10
@@ -98,14 +98,18 @@ class Advertising:
 
         return torch.zeros_like(p)
 
-    def optimal_policy(self):
-        q = self.optimal_ad_probability(self.initial_distribution)
+    def optimal_policy(self, mu=None):
+        if mu is None:
+            return lambda t, law: self.optimal_policy(law)
+
+        q = self.optimal_ad_probability(mu)
         pi = torch.empty(self.n_states, self.n_actions, dtype=self.dtype, device=self.device)
         pi[:, self.NO_AD] = 1.0 - q
         pi[:, self.AD] = q
         return pi
 
-    def optimal_theta(self):
-        pi = self.optimal_policy()
+    def optimal_theta(self, mu=None):
+        mu = self.initial_distribution if mu is None else mu
+        pi = self.optimal_policy(mu)
         pi = pi.clamp(1e-6, 1.0 - 1e-6)
         return torch.log(pi[:, self.AD] / pi[:, self.NO_AD])

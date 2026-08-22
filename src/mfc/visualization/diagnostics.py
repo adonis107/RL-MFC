@@ -52,7 +52,15 @@ def reward_gradient(env, policy, lambda_):
     return gradient
 
 
-def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=True):
+def safe_scalar_ratio(numerator, denominator):
+    numerator = torch.as_tensor(numerator)
+    denominator = torch.as_tensor(denominator)
+    if not torch.isfinite(denominator).item() or denominator.item() <= 0:
+        return float("nan")
+    return float(numerator / denominator)
+
+
+def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=True, n_particles=None):
     env, policy = load_env_and_policy(run)
     metadata = run["metadata"]
     algorithm_config = metadata["algorithm_config"]
@@ -64,9 +72,10 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         raise ValueError("Exact gradient diagnostics currently require direct tensor policies.")
 
     lambda_ = metadata["perturbation"]
+    particle_count = n_particles or algorithm_config.get("n_particles")
     if metadata["env"] in {"lq", "portfolio"}:
         config = ContinuousTransportConfig(
-            n_particles=algorithm_config.get("n_particles"),
+            n_particles=particle_count,
             n_law_gradient=algorithm_config.get("n_law_gradient"),
             n_law_particles=algorithm_config.get("n_law_particles"),
             lambda_=lambda_,
@@ -84,7 +93,7 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         estimator = ContinuousTransport(env, policy=policy, config=config)
     else:
         config = DiscreteTransportConfig(
-            n_particles=algorithm_config.get("n_particles"),
+            n_particles=particle_count,
             n_logit_gradient=algorithm_config.get("n_logit_gradient"),
             lambda_=lambda_,
             eta=algorithm_config.get("eta"),
@@ -112,6 +121,7 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
     estimate_se = estimate_std / n_replications**0.5
     n_parameters = exact.numel()
     bias_chi2_stat, bias_chi2_pvalue = norm_chi_square(bias_norm, estimate_se, n_parameters)
+    exact_norm = exact.norm()
 
     row = {
         "env": metadata["env"],
@@ -120,10 +130,13 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         "horizon": metadata["horizon"],
         "lambda": lambda_,
         "n_parameters": n_parameters,
+        "diagnostic_n_particles": estimator.n_particles,
         "n_replications": n_replications,
         "bias_norm": float(bias_norm),
         "estimate_std": float(estimate_std),
         "estimate_se": float(estimate_se),
+        "estimate_se_to_exact_norm": safe_scalar_ratio(estimate_se, exact_norm),
+        "estimate_snr": safe_scalar_ratio(exact_norm, estimate_se),
         "bias_z": z_ratio(bias_norm, estimate_se),
         "bias_z_null_rms": 1.0,
         "bias_chi2_stat": bias_chi2_stat,
@@ -131,7 +144,7 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         "bias_chi2_pvalue": bias_chi2_pvalue,
         "mse": float(error.square().mean()),
         "cosine_similarity": float(torch.nn.functional.cosine_similarity(mean_estimate, exact, dim=0)),
-        "exact_gradient_norm": float(exact.norm()),
+        "exact_gradient_norm": float(exact_norm),
         "estimate_gradient_norm_mean": float(estimates.norm(dim=1).mean()),
     }
     if compare_to_unperturbed:
