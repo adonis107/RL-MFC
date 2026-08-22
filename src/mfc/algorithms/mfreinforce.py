@@ -136,6 +136,11 @@ class MFReinforce:
             return self.env.sample_initial_distribution(generator)
         return self.env.initial_distribution
 
+    def validation_initial_distributions(self):
+        if hasattr(self.env, "validation_initial_distributions"):
+            return list(self.env.validation_initial_distributions())
+        return [self.env.initial_distribution]
+
     def initial_state(self, generator, initial_distribution=None):
         probabilities = self.sample_initial_distribution(generator) if initial_distribution is None else initial_distribution
         return torch.multinomial(probabilities, 1, generator=generator).reshape(())
@@ -246,6 +251,39 @@ class MFReinforce:
         for t in range(len(rewards) - 1, -1, -1):
             values[t] = rewards[t] + self.discount * values[t + 1]
         return values
+
+    def expected_reward(self, t, law):
+        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
+        with torch.no_grad():
+            for state_index in range(self.env.n_states):
+                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
+                action_probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
+                for action_index in range(self.env.n_actions):
+                    action = torch.tensor(action_index, dtype=torch.long, device=self.env.device)
+                    value = value + law[state_index] * action_probabilities[action_index] * self.env.reward(
+                        state,
+                        law,
+                        action,
+                    )
+        return value
+
+    def expected_terminal_reward(self, law):
+        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
+        with torch.no_grad():
+            for state_index in range(self.env.n_states):
+                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
+                value = value + law[state_index] * self.env.terminal_reward(state, law)
+        return value
+
+    def evaluate_law(self, initial_distribution, horizon):
+        law = initial_distribution
+        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
+        discount = 1.0
+        for t in range(horizon):
+            value = value + discount * self.expected_reward(t, law)
+            law = self.mean_field_next_law(t, law)
+            discount = discount * self.discount
+        return value + discount * self.expected_terminal_reward(law)
 
     def estimate_state_logit_gradients(self, log_laws, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
@@ -448,24 +486,12 @@ class MFReinforce:
         return gradient, torch.stack(objectives).mean()
 
     def evaluate(self, n_particles=None, horizon=None, seed=None):
-        n_particles = self.n_particles if n_particles is None else n_particles
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
-        generator = torch.Generator(device=self.env.device)
-        generator.manual_seed(self.config.seed if seed is None else seed)
-        initial_distribution = self.sample_initial_distribution(generator)
-        _, log_laws = self.mean_field_law_flow(horizon=horizon, seed=seed, initial_distribution=initial_distribution)
-
-        states = self.initial_states(n_particles, generator, initial_distribution)
-        rewards = []
-        for t in range(horizon):
-            law = torch.softmax(log_laws[t], dim=0)
-            actions, _ = self.sample_actions_with_log_probs(t, states, law.expand(n_particles, -1), generator)
-            rewards.append(self.env.reward(states, law, actions))
-            with torch.no_grad():
-                states = self.sample_next_state(t, states, law, actions, generator)
-
-        terminal = self.env.terminal_reward(states, torch.softmax(log_laws[-1], dim=0))
-        return self.discounted_returns(rewards, terminal)[0].mean()
+        values = [
+            self.evaluate_law(initial_distribution, horizon)
+            for initial_distribution in self.validation_initial_distributions()
+        ]
+        return torch.stack(values).mean()
 
     def train(self):
         optimizer = self.optimizer()

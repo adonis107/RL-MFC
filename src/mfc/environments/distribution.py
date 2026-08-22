@@ -14,6 +14,7 @@ class DistributionConfig:
     n_particles: int = 500
     n_logit_gradient: int = 10
     validation_interval: int = 10
+    # Intentionally different from the paper description to match the actual experiment 
     target_distribution: tuple[float, ...] = (0.02, 0.04, 0.09, 0.16, 0.19, 0.19, 0.16, 0.09, 0.04, 0.02)
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 

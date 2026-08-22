@@ -92,7 +92,7 @@ def build_environment(args):
         "validation_interval": args.validation_interval,
     }
 
-    if args.env in {"advertising", "cybersecurity", "distribution"}:
+    if args.env in {"advertising", "distribution"}:
         updates["T_val"] = args.horizon
 
     config = update_dataclass(config, **updates)

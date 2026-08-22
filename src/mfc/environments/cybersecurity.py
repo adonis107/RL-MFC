@@ -20,7 +20,7 @@ class CybersecurityConfig:
     gamma: float = 0.5
     hidden_width: int = 32
     T: int = 3
-    T_val: int = 3
+    T_val: int = 50
     n_train: int = 20_000
     lr: float = 1e-3
     n_particles: int = 200
@@ -35,7 +35,6 @@ class CybersecurityPolicy(nn.Module):
         self.device = config.device
         self.n_states = 4
         self.n_actions = 2
-        self.time_scale = float(max(config.T - 1, 1))
         self.net = nn.Sequential(
             nn.Linear(1 + self.n_states, config.hidden_width),
             nn.Tanh(),
@@ -48,7 +47,7 @@ class CybersecurityPolicy(nn.Module):
     def forward(self, t, mu):
         if t.ndim == 0:
             t = t.expand(mu.shape[:-1])
-        t = t / self.time_scale
+        t = t / (1.0 + t)
         t = t.unsqueeze(-1)
         logits = self.net(torch.cat([t, mu], dim=-1))
         logits = logits.reshape(*mu.shape[:-1], self.n_states, self.n_actions)
@@ -66,6 +65,10 @@ class Cybersecurity:
 
         self.initial_distribution = torch.full((4,), 0.25, dtype=self.dtype, device=self.device)
         self.f = torch.tensor([config.k_D + config.k_I, config.k_D, config.k_I, 0.0], dtype=self.dtype, device=self.device)
+
+    def sample_initial_distribution(self, generator):
+        weights = -torch.rand(self.n_states, dtype=self.dtype, device=self.device, generator=generator).clamp_min(1e-12).log()
+        return weights / weights.sum()
 
     def _generator_matrix(self, mu, actions):
         sw = self.config.lambda_sw * actions.to(self.dtype)
