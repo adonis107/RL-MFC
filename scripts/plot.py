@@ -9,11 +9,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
-from mfc.visualization import (  # noqa: E402
+from mfc.visualization import (
     advertising_policy_error_table,
     discrete_transport_tv_bound_table,
     gradient_diagnostics,
