@@ -39,6 +39,8 @@ class CybersecurityPolicy(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(1 + self.n_states, config.hidden_width),
             nn.Tanh(),
+            nn.Linear(config.hidden_width, config.hidden_width),
+            nn.Tanh(),
             nn.Linear(config.hidden_width, self.n_states * self.n_actions),
         )
         self.to(self.device)

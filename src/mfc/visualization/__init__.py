@@ -22,6 +22,7 @@ from .plots import (
     plot_validation_rewards,
 )
 from .tables import (
+    advertising_policy_error_table,
     discrete_transport_tv_bound_table,
     objective_table,
     runtime_table,

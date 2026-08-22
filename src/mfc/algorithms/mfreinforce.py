@@ -131,11 +131,18 @@ class MFReinforce:
             gradients.append(self.flat_grad((log_probs * weights.unsqueeze(0)).sum(), retain_graph=True))
         return torch.stack(gradients)
 
-    def initial_state(self, generator):
-        return torch.multinomial(self.env.initial_distribution, 1, generator=generator).reshape(())
+    def sample_initial_distribution(self, generator):
+        if hasattr(self.env, "sample_initial_distribution"):
+            return self.env.sample_initial_distribution(generator)
+        return self.env.initial_distribution
 
-    def initial_states(self, n_particles, generator):
-        return torch.multinomial(self.env.initial_distribution, n_particles, replacement=True, generator=generator)
+    def initial_state(self, generator, initial_distribution=None):
+        probabilities = self.sample_initial_distribution(generator) if initial_distribution is None else initial_distribution
+        return torch.multinomial(probabilities, 1, generator=generator).reshape(())
+
+    def initial_states(self, n_particles, generator, initial_distribution=None):
+        probabilities = self.sample_initial_distribution(generator) if initial_distribution is None else initial_distribution
+        return torch.multinomial(probabilities, n_particles, replacement=True, generator=generator)
 
     def sample_action(self, t, state, law, generator):
         probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
@@ -187,12 +194,13 @@ class MFReinforce:
 
         return next_law / next_law.sum()
 
-    def mean_field_law_flow(self, horizon=None, seed=None):
+    def mean_field_law_flow(self, horizon=None, seed=None, initial_distribution=None):
         horizon = self.horizon if horizon is None else horizon
         if self.config.flow == "particle":
-            return self.particle_law_flow(horizon, seed)
+            return self.particle_law_flow(horizon, seed, initial_distribution=initial_distribution)
 
-        laws = [self.env.initial_distribution.detach()]
+        initial_distribution = self.env.initial_distribution if initial_distribution is None else initial_distribution
+        laws = [initial_distribution.detach()]
         log_laws = [self.log_law(laws[0])]
 
         for t in range(horizon):
@@ -202,12 +210,11 @@ class MFReinforce:
 
         return laws, log_laws
 
-    def particle_law_flow(self, horizon, seed=None):
+    def particle_law_flow(self, horizon, seed=None, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(self.config.seed + 20_000 if seed is None else seed)
-        states = torch.multinomial(
-            self.env.initial_distribution, self.n_flow_particles, replacement=True, generator=generator
-        )
+        initial_distribution = self.sample_initial_distribution(generator) if initial_distribution is None else initial_distribution
+        states = torch.multinomial(initial_distribution, self.n_flow_particles, replacement=True, generator=generator)
         laws = [self.empirical_law(states)]
         log_laws = [self.log_law(laws[0])]
 
@@ -240,7 +247,7 @@ class MFReinforce:
             values[t] = rewards[t] + self.discount * values[t + 1]
         return values
 
-    def estimate_state_logit_gradients(self, log_laws, seed):
+    def estimate_state_logit_gradients(self, log_laws, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
@@ -253,8 +260,8 @@ class MFReinforce:
         for target_t in range(1, self.horizon + 1):
             numerator = torch.zeros(self.env.n_states, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
 
-            base_states = self.initial_states(self.n_logit_gradient, generator)
-            perturbed_states = self.initial_states(self.n_logit_gradient, generator)
+            base_states = self.initial_states(self.n_logit_gradient, generator, initial_distribution)
+            perturbed_states = self.initial_states(self.n_logit_gradient, generator, initial_distribution)
             noises = torch.randn(
                 target_t,
                 self.n_logit_gradient,
@@ -295,12 +302,12 @@ class MFReinforce:
 
         return gradients
 
-    def trajectory_gradient(self, log_laws, logit_gradients, seed):
+    def trajectory_gradient(self, log_laws, logit_gradients, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
-        base_state = self.initial_state(generator)
-        perturbed_state = self.initial_state(generator)
+        base_state = self.initial_state(generator, initial_distribution)
+        perturbed_state = self.initial_state(generator, initial_distribution)
         noises = torch.randn(
             self.horizon + 1, self.env.n_states, dtype=self.env.dtype, device=self.env.device, generator=generator
         )
@@ -335,12 +342,12 @@ class MFReinforce:
         base_returns = self.discounted_returns(rewards, terminal_reward)
         return torch.stack(score_terms), torch.stack(returns), base_returns[0]
 
-    def batched_trajectory_gradient(self, log_laws, logit_gradients, seed):
+    def batched_trajectory_gradient(self, log_laws, logit_gradients, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
-        base_states = self.initial_states(self.n_particles, generator)
-        perturbed_states = self.initial_states(self.n_particles, generator)
+        base_states = self.initial_states(self.n_particles, generator, initial_distribution)
+        perturbed_states = self.initial_states(self.n_particles, generator, initial_distribution)
         noises = torch.randn(
             self.horizon + 1,
             self.n_particles,
@@ -388,21 +395,42 @@ class MFReinforce:
         return (action_gradient + law_gradient) / self.n_particles, base_returns[0].mean()
 
     def estimate_gradient(self, seed):
-        _, log_laws = self.mean_field_law_flow(seed=seed + 20_000)
+        law_generator = torch.Generator(device=self.env.device)
+        law_generator.manual_seed(seed + 30_000)
+        initial_distribution = self.sample_initial_distribution(law_generator)
+        _, log_laws = self.mean_field_law_flow(seed=seed + 20_000, initial_distribution=initial_distribution)
         shared_logit_gradients = None
         if self.config.reuse_state_gradient:
-            shared_logit_gradients = self.estimate_state_logit_gradients(log_laws, seed + 10_000)
+            shared_logit_gradients = self.estimate_state_logit_gradients(
+                log_laws,
+                seed + 10_000,
+                initial_distribution=initial_distribution,
+            )
 
         if shared_logit_gradients is not None:
-            return self.batched_trajectory_gradient(log_laws, shared_logit_gradients, seed)
+            return self.batched_trajectory_gradient(
+                log_laws,
+                shared_logit_gradients,
+                seed,
+                initial_distribution=initial_distribution,
+            )
 
         gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
         scores = []
         returns = []
         objectives = []
         for k in range(self.n_particles):
-            logit_gradients = self.estimate_state_logit_gradients(log_laws, seed + 10_000 + k)
-            score, trajectory_returns, particle_objective = self.trajectory_gradient(log_laws, logit_gradients, seed + k)
+            logit_gradients = self.estimate_state_logit_gradients(
+                log_laws,
+                seed + 10_000 + k,
+                initial_distribution=initial_distribution,
+            )
+            score, trajectory_returns, particle_objective = self.trajectory_gradient(
+                log_laws,
+                logit_gradients,
+                seed + k,
+                initial_distribution=initial_distribution,
+            )
             objectives.append(particle_objective)
             if self.config.baseline:
                 scores.append(score)
@@ -422,11 +450,12 @@ class MFReinforce:
     def evaluate(self, n_particles=None, horizon=None, seed=None):
         n_particles = self.n_particles if n_particles is None else n_particles
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
-        _, log_laws = self.mean_field_law_flow(horizon=horizon, seed=seed)
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(self.config.seed if seed is None else seed)
+        initial_distribution = self.sample_initial_distribution(generator)
+        _, log_laws = self.mean_field_law_flow(horizon=horizon, seed=seed, initial_distribution=initial_distribution)
 
-        states = self.initial_states(n_particles, generator)
+        states = self.initial_states(n_particles, generator, initial_distribution)
         rewards = []
         for t in range(horizon):
             law = torch.softmax(log_laws[t], dim=0)

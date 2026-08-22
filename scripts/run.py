@@ -67,7 +67,7 @@ def experiment_plan(env):
 
     if env == "portfolio":
         jobs = [job(env, "reinforce", 10)]
-        jobs.extend(job(env, "transport", 10, perturbation=lambda_) for lambda_ in (0.1, 0.2, 0.4))
+        jobs.extend(job(env, "transport", 10, perturbation=lambda_) for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4))
         return jobs
 
     raise ValueError(f"Unknown environment: {env}")

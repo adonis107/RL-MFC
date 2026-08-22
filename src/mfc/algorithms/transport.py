@@ -69,7 +69,7 @@ class DiscreteTransport(MFReinforce):
         a = -z / self.config.simplex_sigma**2
         return a / q[..., :-1] + a.sum(dim=-1, keepdim=True) / q[..., -1:] - 1.0 / q[..., :-1] + 1.0 / q[..., -1:]
 
-    def estimate_state_sensitivities(self, laws, seed):
+    def estimate_state_sensitivities(self, laws, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
@@ -77,7 +77,7 @@ class DiscreteTransport(MFReinforce):
             torch.zeros(self.env.n_states, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
             for _ in range(self.horizon + 1)
         ]
-        states = [self.initial_states(self.n_logit_gradient, generator)]
+        states = [self.initial_states(self.n_logit_gradient, generator, initial_distribution)]
         action_log_probs = []
         h_values = []
 
@@ -114,12 +114,12 @@ class DiscreteTransport(MFReinforce):
 
         return sensitivities
 
-    def trajectory_gradient(self, laws, sensitivities, seed):
+    def trajectory_gradient(self, laws, sensitivities, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
-        base_state = self.initial_state(generator)
-        state = self.initial_state(generator)
+        base_state = self.initial_state(generator, initial_distribution)
+        state = self.initial_state(generator, initial_distribution)
         base_rewards = []
         rewards = []
         policy_score = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
@@ -152,12 +152,12 @@ class DiscreteTransport(MFReinforce):
         base_return = self.discounted_returns(base_rewards, base_terminal_reward)[0]
         return trajectory_score, trajectory_return, base_return
 
-    def batched_trajectory_gradient(self, laws, sensitivities, seed):
+    def batched_trajectory_gradient(self, laws, sensitivities, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
 
-        base_states = self.initial_states(self.n_particles, generator)
-        states = self.initial_states(self.n_particles, generator)
+        base_states = self.initial_states(self.n_particles, generator, initial_distribution)
+        states = self.initial_states(self.n_particles, generator, initial_distribution)
         base_rewards = []
         rewards = []
         action_log_probs = []
@@ -196,13 +196,25 @@ class DiscreteTransport(MFReinforce):
         return (action_gradient + law_gradient) / self.n_particles, base_return.mean()
 
     def estimate_gradient(self, seed):
-        laws, _ = self.mean_field_law_flow(seed=seed + 20_000)
+        law_generator = torch.Generator(device=self.env.device)
+        law_generator.manual_seed(seed + 30_000)
+        initial_distribution = self.sample_initial_distribution(law_generator)
+        laws, _ = self.mean_field_law_flow(seed=seed + 20_000, initial_distribution=initial_distribution)
         shared_sensitivities = None
         if self.config.reuse_state_gradient:
-            shared_sensitivities = self.estimate_state_sensitivities(laws, seed + 10_000)
+            shared_sensitivities = self.estimate_state_sensitivities(
+                laws,
+                seed + 10_000,
+                initial_distribution=initial_distribution,
+            )
 
         if shared_sensitivities is not None:
-            return self.batched_trajectory_gradient(laws, shared_sensitivities, seed)
+            return self.batched_trajectory_gradient(
+                laws,
+                shared_sensitivities,
+                seed,
+                initial_distribution=initial_distribution,
+            )
 
         gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
         return_sum = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
@@ -210,9 +222,18 @@ class DiscreteTransport(MFReinforce):
         returns = []
 
         for b in range(self.n_particles):
-            sensitivities = self.estimate_state_sensitivities(laws, seed + 10_000 + b)
+            sensitivities = self.estimate_state_sensitivities(
+                laws,
+                seed + 10_000 + b,
+                initial_distribution=initial_distribution,
+            )
 
-            score, trajectory_return, base_return = self.trajectory_gradient(laws, sensitivities, seed + b)
+            score, trajectory_return, base_return = self.trajectory_gradient(
+                laws,
+                sensitivities,
+                seed + b,
+                initial_distribution=initial_distribution,
+            )
             if self.config.baseline:
                 scores.append(score)
                 returns.append(trajectory_return)

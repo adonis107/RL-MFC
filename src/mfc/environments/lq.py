@@ -6,7 +6,7 @@ import torch
 class LQConfig:
     a: float = 0.9
     b: float = 0.5
-    c: float = 0.8
+    c: float = 0.05
     q: float = 1.0
     r: float = 0.1
     gamma: float = 5.0
@@ -20,7 +20,7 @@ class LQConfig:
     Sigma0: float = 0.25
     T: int = 20
     discount: float = 1.0
-    n_train: int = 20_000
+    n_train: int = 10_000
     lr: float = 1e-3
     n_particles: int = 200
     validation_interval: int = 10

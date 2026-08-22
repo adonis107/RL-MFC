@@ -27,6 +27,8 @@ class DistributionPolicy(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(1 + self.n_states, config.hidden_width),
             nn.Tanh(),
+            nn.Linear(config.hidden_width, config.hidden_width),
+            nn.Tanh(),
             nn.Linear(config.hidden_width, self.n_states * self.n_actions),
         )
         self.to(self.device)
@@ -51,6 +53,10 @@ class Distribution:
         self.initial_distribution = torch.full((10,), 0.1, dtype=self.dtype, device=self.device)
         self.target_distribution = torch.tensor(config.target_distribution, dtype=self.dtype, device=self.device)
         self.action_values = torch.tensor([-1, 0, 1], dtype=torch.long, device=self.device)
+
+    def sample_initial_distribution(self, generator):
+        weights = -torch.rand(self.n_states, dtype=self.dtype, device=self.device, generator=generator).clamp_min(1e-12).log()
+        return weights / weights.sum()
 
     def transition(self, states, mu, actions):
         moves = self.action_values[actions]

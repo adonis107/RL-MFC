@@ -146,22 +146,33 @@ def plot_advertising_diagnostics(run, ax=None, save_path=None):
     flow = learned_flow(run).to(env.device)
     customer = flow[:, env.CUSTOMER].cpu()
     ad_probability = []
+    optimal_ad_probability = []
     with torch.no_grad():
         for t in range(metadata["horizon"]):
             probs = final_policy_probabilities(env, policy, law=flow[t], t=t)
             ad_probability.append(float(probs[:, env.AD].mean()))
+            optimal_probs = env.optimal_policy(flow[t])
+            optimal_ad_probability.append(float(optimal_probs[:, env.AD].mean()))
 
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(range(len(customer)), customer, label="customer share")
     ax.plot(range(len(ad_probability)), ad_probability, label="mean ad probability")
+    ax.plot(range(len(optimal_ad_probability)), optimal_ad_probability, label="optimal ad probability", linestyle="--")
     ax.set_xlabel("time")
     ax.set_ylabel("value")
     ax.legend(frameon=False)
     ax.grid(alpha=0.25)
     if save_path is not None:
         ax.figure.savefig(save_path, bbox_inches="tight", dpi=180)
-    return ax, pd.DataFrame({"time": range(len(customer)), "customer_share": customer.numpy()})
+    return ax, pd.DataFrame(
+        {
+            "time": range(len(customer)),
+            "customer_share": customer.numpy(),
+            "learned_ad_probability": ad_probability + [float("nan")],
+            "optimal_ad_probability": optimal_ad_probability + [float("nan")],
+        }
+    )
 
 
 def plot_flow_comparison(runs, env, horizon=None, ax=None, save_path=None):
@@ -189,6 +200,8 @@ def plot_flow_comparison(runs, env, horizon=None, ax=None, save_path=None):
 
     ax.set_xlabel("training step")
     ax.set_ylabel("validation reward")
+    if env == "lq":
+        use_symlog_validation_axis(ax, df["validation_reward"])
     ax.legend(frameon=False)
     ax.grid(alpha=0.25)
     if save_path is not None:

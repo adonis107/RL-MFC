@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mfc.visualization import (  # noqa: E402
+    advertising_policy_error_table,
     discrete_transport_tv_bound_table,
     gradient_diagnostics,
     best_runs_by_label,
@@ -78,6 +79,8 @@ def make_standard_outputs(
 
     if env == "twostate":
         save_table(twostate_policy_error_table(runs), output_dir / "policy_error.csv")
+    if env == "advertising":
+        save_table(advertising_policy_error_table(runs), output_dir / "policy_error.csv")
 
     for run in best_runs_by_label(runs):
         metadata = run["metadata"]

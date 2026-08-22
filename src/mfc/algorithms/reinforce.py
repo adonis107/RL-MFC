@@ -69,11 +69,16 @@ class Reinforce:
         policy_class = getattr(module, f"{type(self.env).__name__}Policy")
         return policy_class(self.env.config)
 
-    def initial_states(self, n_particles, generator):
+    def sample_initial_distribution(self, generator):
+        if hasattr(self.env, "sample_initial_distribution"):
+            return self.env.sample_initial_distribution(generator)
+        return self.env.initial_distribution
+
+    def initial_states(self, n_particles, generator, initial_distribution=None):
         if hasattr(self.env, "sample_initial"):
             return self.env.sample_initial(n_particles, generator)
 
-        probabilities = self.env.initial_distribution
+        probabilities = self.sample_initial_distribution(generator) if initial_distribution is None else initial_distribution
         return torch.multinomial(probabilities, n_particles, replacement=True, generator=generator)
 
     def empirical_law(self, states):
@@ -121,7 +126,10 @@ class Reinforce:
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(self.config.seed if seed is None else seed)
 
-        states = self.initial_states(n_particles, generator)
+        initial_distribution = None
+        if not hasattr(self.env, "sample_initial"):
+            initial_distribution = self.sample_initial_distribution(generator)
+        states = self.initial_states(n_particles, generator, initial_distribution=initial_distribution)
         rewards = []
         log_probs = []
 

@@ -10,7 +10,7 @@ class TwoStateConfig:
     p: float = 0.6
     T: int = 2
     gamma: float = 1.0 # No discount
-    n_train: int = 10_000
+    n_train: int = 5_000
     lr: float = 1e-3
     n_particles: int = 200
     n_logit_gradient: int = 10
@@ -29,6 +29,10 @@ class TwoState:
         self.target_law = torch.tensor([config.p, 1.0 - config.p], dtype=self.dtype, device=self.device)
         self.initial_distribution = torch.tensor([0.2, 0.8], dtype=self.dtype, device=self.device)
         self._switch_prob = torch.tensor([config.lambda0, config.lambda1], dtype=self.dtype, device=self.device)
+
+    def sample_initial_distribution(self, generator):
+        mu1 = 0.1 + 0.8 * torch.rand((), dtype=self.dtype, device=self.device, generator=generator)
+        return torch.stack([1.0 - mu1, mu1])
 
     def transition(self, states, mu, actions):
         switch_prob = self._switch_prob[states]

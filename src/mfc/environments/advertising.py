@@ -6,8 +6,8 @@ from torch import nn
 @dataclass(frozen=True)
 class AdvertisingConfig:
     eta: float = 0.2
-    ad_cost: float = 0.2
-    gamma: float = 0.9
+    ad_cost: float = 0.15
+    gamma: float = 0.5
     hidden_width: int = 32
     T: int = 10
     T_val: int = 10
@@ -27,6 +27,8 @@ class AdvertisingPolicy(nn.Module):
         self.n_actions = 2
         self.net = nn.Sequential(
             nn.Linear(1 + self.n_states, config.hidden_width),
+            nn.Tanh(),
+            nn.Linear(config.hidden_width, config.hidden_width),
             nn.Tanh(),
             nn.Linear(config.hidden_width, self.n_states * self.n_actions),
         )

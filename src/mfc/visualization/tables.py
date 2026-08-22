@@ -49,6 +49,41 @@ def twostate_policy_error_table(runs):
     return pd.DataFrame(rows)
 
 
+def advertising_policy_error_table(runs):
+    rows = []
+    for run in runs:
+        if run["metadata"]["env"] != "advertising":
+            continue
+        env, policy = load_env_and_policy(run)
+        flow = discrete_law_flow(env, policy, run["metadata"]["horizon"]).to(env.device)
+        errors = []
+        learned_means = []
+        optimal_means = []
+        for t in range(run["metadata"]["horizon"]):
+            learned = final_policy_probabilities(env, policy, law=flow[t], t=t).to(env.device)
+            optimal = env.optimal_policy(flow[t])
+            learned_mean = learned[:, env.AD].mean()
+            optimal_mean = optimal[:, env.AD].mean()
+            learned_means.append(learned_mean)
+            optimal_means.append(optimal_mean)
+            errors.append((learned[:, env.AD] - optimal[:, env.AD]).abs().mean())
+
+        errors = torch.stack(errors)
+        rows.append(
+            {
+                "label": run_label(run["metadata"]),
+                "flow": run["metadata"]["flow"],
+                "horizon": run["metadata"]["horizon"],
+                "seed": run["metadata"]["seed"],
+                "mean_abs_ad_probability_error": float(errors.mean().detach().cpu()),
+                "max_abs_ad_probability_error": float(errors.max().detach().cpu()),
+                "learned_mean_ad_probability": float(torch.stack(learned_means).mean().detach().cpu()),
+                "optimal_mean_ad_probability": float(torch.stack(optimal_means).mean().detach().cpu()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def objective_table(runs):
     rows = []
     optimum_cache = {}
