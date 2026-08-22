@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import importlib
 import inspect
+import time
 
 import torch
 from torch import nn
@@ -739,21 +740,31 @@ class ContinuousTransport:
 
     def train(self):
         optimizer = self.optimizer()
-        history = {"objective": [], "validation_objective": [], "gradient_norm": []}
+        history = {
+            "objective": [],
+            "validation_objective": [],
+            "gradient_norm": [],
+            "train_step_seconds": [],
+            "validation_seconds": [],
+        }
 
         for episode in range(self.n_train):
+            step_started_at = time.perf_counter()
             gradient, objective = self.estimate_gradient(self.config.seed + episode * (self.n_particles + 1))
 
             optimizer.zero_grad()
             self.set_flat_gradient(-gradient)
             optimizer.step()
+            history["train_step_seconds"].append(time.perf_counter() - step_started_at)
 
             history["objective"].append(float(objective.detach().cpu()))
             history["gradient_norm"].append(float(gradient.norm().detach().cpu()))
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
+                validation_started_at = time.perf_counter()
                 with torch.no_grad():
                     validation = self.evaluate(seed=self.config.seed + self.n_train)
+                history["validation_seconds"].append(time.perf_counter() - validation_started_at)
                 history["validation_objective"].append(float(validation.detach().cpu()))
 
         return self.policy, history

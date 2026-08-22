@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 import importlib
 import inspect
+import time
 
 import torch
 from torch import nn
+
+from .discrete_validation import evaluate_initial_distributions, evaluate_law, mean_field_next_law
 
 
 @dataclass(frozen=True)
@@ -187,17 +190,7 @@ class MFReinforce:
         return torch.softmax(log_law + self.perturbation_eta * noise, dim=-1)
 
     def mean_field_next_law(self, t, law):
-        next_law = torch.zeros_like(law)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                action_probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
-                for action_index in range(self.env.n_actions):
-                    action = torch.tensor(action_index, dtype=torch.long, device=self.env.device)
-                    transition = self.env.transition(state, law, action)
-                    next_law = next_law + law[state_index] * action_probabilities[action_index] * transition
-
-        return next_law / next_law.sum()
+        return mean_field_next_law(self.env, self.policy, self.policy_time, t, law)
 
     def mean_field_law_flow(self, horizon=None, seed=None, initial_distribution=None):
         horizon = self.horizon if horizon is None else horizon
@@ -252,38 +245,15 @@ class MFReinforce:
             values[t] = rewards[t] + self.discount * values[t + 1]
         return values
 
-    def expected_reward(self, t, law):
-        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                action_probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
-                for action_index in range(self.env.n_actions):
-                    action = torch.tensor(action_index, dtype=torch.long, device=self.env.device)
-                    value = value + law[state_index] * action_probabilities[action_index] * self.env.reward(
-                        state,
-                        law,
-                        action,
-                    )
-        return value
-
-    def expected_terminal_reward(self, law):
-        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                value = value + law[state_index] * self.env.terminal_reward(state, law)
-        return value
-
     def evaluate_law(self, initial_distribution, horizon):
-        law = initial_distribution
-        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-        discount = 1.0
-        for t in range(horizon):
-            value = value + discount * self.expected_reward(t, law)
-            law = self.mean_field_next_law(t, law)
-            discount = discount * self.discount
-        return value + discount * self.expected_terminal_reward(law)
+        return evaluate_law(
+            self.env,
+            self.policy,
+            self.policy_time,
+            self.discount,
+            initial_distribution,
+            horizon,
+        )
 
     def estimate_state_logit_gradients(self, log_laws, seed, initial_distribution=None):
         generator = torch.Generator(device=self.env.device)
@@ -486,30 +456,47 @@ class MFReinforce:
         return gradient, torch.stack(objectives).mean()
 
     def evaluate(self, n_particles=None, horizon=None, seed=None):
+        """Evaluate by exact deterministic population recursion.
+
+        The n_particles and seed arguments are kept for API compatibility.
+        """
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
-        values = [
-            self.evaluate_law(initial_distribution, horizon)
-            for initial_distribution in self.validation_initial_distributions()
-        ]
-        return torch.stack(values).mean()
+        return evaluate_initial_distributions(
+            self.env,
+            self.policy,
+            self.policy_time,
+            self.discount,
+            self.validation_initial_distributions(),
+            horizon,
+        )
 
     def train(self):
         optimizer = self.optimizer()
-        history = {"objective": [], "validation_objective": [], "gradient_norm": []}
+        history = {
+            "objective": [],
+            "validation_objective": [],
+            "gradient_norm": [],
+            "train_step_seconds": [],
+            "validation_seconds": [],
+        }
 
         for episode in range(self.n_train):
+            step_started_at = time.perf_counter()
             gradient, objective = self.estimate_gradient(self.config.seed + episode * (self.n_particles + 1))
 
             optimizer.zero_grad()
             self.set_flat_gradient(-gradient)
             optimizer.step()
+            history["train_step_seconds"].append(time.perf_counter() - step_started_at)
 
             history["objective"].append(float(objective.detach().cpu()))
             history["gradient_norm"].append(float(gradient.norm().detach().cpu()))
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
+                validation_started_at = time.perf_counter()
                 with torch.no_grad():
                     validation = self.evaluate(seed=self.config.seed + self.n_train)
+                history["validation_seconds"].append(time.perf_counter() - validation_started_at)
                 history["validation_objective"].append(float(validation.detach().cpu()))
 
         return self.policy, history

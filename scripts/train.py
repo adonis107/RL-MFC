@@ -236,6 +236,11 @@ def validation_steps(algorithm, history):
     ][: len(history["validation_objective"])]
 
 
+def history_time_sum(history, key):
+    values = history.get(key, [])
+    return float(sum(values)) if values else 0.0
+
+
 def run_training(args):
     torch.manual_seed(args.seed)
     env = build_environment(args)
@@ -243,6 +248,9 @@ def run_training(args):
     started_at = time.perf_counter()
     policy, history = algorithm.train()
     elapsed_seconds = time.perf_counter() - started_at
+    train_step_seconds = history_time_sum(history, "train_step_seconds")
+    validation_seconds = history_time_sum(history, "validation_seconds")
+    unaccounted_seconds = max(0.0, elapsed_seconds - train_step_seconds - validation_seconds)
 
     out_dir = output_directory(args)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +267,9 @@ def run_training(args):
         "algorithm_config": {key: json_ready(value) for key, value in asdict(algorithm.config).items()},
         "simulator_budget_estimate": simulator_budget_estimate(algorithm),
         "elapsed_seconds": elapsed_seconds,
+        "train_step_seconds": train_step_seconds,
+        "validation_seconds": validation_seconds,
+        "unaccounted_seconds": unaccounted_seconds,
     }
     history["validation_steps"] = validation_steps(algorithm, history)
 
@@ -275,7 +286,12 @@ def run_training(args):
         if history["validation_objective"]
         else None,
         "elapsed_seconds": elapsed_seconds,
-        "seconds_per_training_step": elapsed_seconds / max(algorithm.n_train, 1),
+        "train_step_seconds": train_step_seconds,
+        "validation_seconds": validation_seconds,
+        "unaccounted_seconds": unaccounted_seconds,
+        "seconds_per_training_step": train_step_seconds / max(algorithm.n_train, 1),
+        "wall_seconds_per_training_step": elapsed_seconds / max(algorithm.n_train, 1),
+        "validation_seconds_per_call": validation_seconds / max(len(history.get("validation_seconds", [])), 1),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as file:
         json.dump(summary, file, indent=2)

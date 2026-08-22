@@ -112,7 +112,18 @@ def runs_dataframe(runs):
                 "flow": metadata["flow"],
                 "seed": metadata["seed"],
                 "elapsed_seconds": summary.get("elapsed_seconds", metadata.get("elapsed_seconds")),
+                "train_step_seconds": summary.get(
+                    "train_step_seconds",
+                    metadata.get("train_step_seconds", summary.get("elapsed_seconds", metadata.get("elapsed_seconds"))),
+                ),
+                "validation_seconds": summary.get("validation_seconds", metadata.get("validation_seconds", 0.0)),
+                "unaccounted_seconds": summary.get("unaccounted_seconds", metadata.get("unaccounted_seconds", 0.0)),
                 "seconds_per_training_step": summary.get("seconds_per_training_step"),
+                "wall_seconds_per_training_step": summary.get(
+                    "wall_seconds_per_training_step",
+                    summary.get("seconds_per_training_step"),
+                ),
+                "validation_seconds_per_call": summary.get("validation_seconds_per_call", 0.0),
                 "simulator_budget_estimate": metadata.get("simulator_budget_estimate"),
                 "last_objective": summary.get("last_objective"),
                 "last_validation_objective": summary.get("last_validation_objective"),

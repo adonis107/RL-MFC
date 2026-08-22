@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 import importlib
 import inspect
+import time
 
 import torch
 from torch import nn
+
+from .discrete_validation import evaluate_initial_distributions, mean_field_next_law
 
 
 @dataclass(frozen=True)
@@ -171,55 +174,24 @@ class Reinforce:
         return returns + discount * terminal_rewards
 
     def mean_field_next_law(self, t, law):
-        next_law = torch.zeros_like(law)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                action_probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
-                for action_index in range(self.env.n_actions):
-                    action = torch.tensor(action_index, dtype=torch.long, device=self.env.device)
-                    transition = self.env.transition(state, law, action)
-                    next_law = next_law + law[state_index] * action_probabilities[action_index] * transition
-        return next_law / next_law.sum()
-
-    def expected_reward(self, t, law):
-        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                action_probabilities = self.env.policy(self.policy, self.policy_time(t), state, law)
-                for action_index in range(self.env.n_actions):
-                    action = torch.tensor(action_index, dtype=torch.long, device=self.env.device)
-                    value = value + law[state_index] * action_probabilities[action_index] * self.env.reward(
-                        state,
-                        law,
-                        action,
-                    )
-        return value
-
-    def expected_terminal_reward(self, law):
-        value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-        with torch.no_grad():
-            for state_index in range(self.env.n_states):
-                state = torch.tensor(state_index, dtype=torch.long, device=self.env.device)
-                value = value + law[state_index] * self.env.terminal_reward(state, law)
-        return value
+        return mean_field_next_law(self.env, self.policy, self.policy_time, t, law)
 
     def evaluate_discrete(self, horizon):
-        values = []
-        for initial_distribution in self.validation_initial_distributions():
-            law = initial_distribution
-            value = torch.zeros((), dtype=self.env.dtype, device=self.env.device)
-            discount = 1.0
-            for t in range(horizon):
-                value = value + discount * self.expected_reward(t, law)
-                law = self.mean_field_next_law(t, law)
-                discount = discount * self.discount
-            value = value + discount * self.expected_terminal_reward(law)
-            values.append(value)
-        return torch.stack(values).mean()
+        return evaluate_initial_distributions(
+            self.env,
+            self.policy,
+            self.policy_time,
+            self.discount,
+            self.validation_initial_distributions(),
+            horizon,
+        )
 
     def evaluate(self, n_particles=None, horizon=None, seed=None):
+        """Evaluate the policy.
+
+        Discrete environments use exact deterministic validation, so n_particles
+        and seed only affect continuous Monte Carlo rollouts.
+        """
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
         if hasattr(self.env, "n_states"):
             return self.evaluate_discrete(horizon)
@@ -233,22 +205,32 @@ class Reinforce:
 
     def train(self):
         optimizer = self.optimizer()
-        history = {"objective": [], "loss": [], "validation_objective": []}
+        history = {
+            "objective": [],
+            "loss": [],
+            "validation_objective": [],
+            "train_step_seconds": [],
+            "validation_seconds": [],
+        }
 
         for episode in range(self.n_train):
+            step_started_at = time.perf_counter()
             rollout = self.rollout(seed=self.config.seed + episode)
             loss = self.loss(rollout)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            history["train_step_seconds"].append(time.perf_counter() - step_started_at)
 
             history["objective"].append(float(rollout["objective"].detach().cpu()))
             history["loss"].append(float(loss.detach().cpu()))
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
+                validation_started_at = time.perf_counter()
                 with torch.no_grad():
                     validation = self.evaluate(seed=self.config.seed + self.n_train)
+                history["validation_seconds"].append(time.perf_counter() - validation_started_at)
                 history["validation_objective"].append(float(validation.detach().cpu()))
 
         return self.policy, history
