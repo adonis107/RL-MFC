@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 import importlib
 import inspect
-import time
 
 import torch
 from torch import nn
 
 from .mfreinforce import MFReinforce
+from .timing import synchronized_time
 
 
 @dataclass(frozen=True)
@@ -739,33 +739,39 @@ class ContinuousTransport:
         return self.discounted_returns(rewards, terminal)[0].mean()
 
     def train(self):
+        setup_started_at = synchronized_time(self.env.device)
         optimizer = self.optimizer()
+        setup_seconds = synchronized_time(self.env.device) - setup_started_at
         history = {
             "objective": [],
             "validation_objective": [],
             "gradient_norm": [],
             "train_step_seconds": [],
             "validation_seconds": [],
+            "setup_seconds": [setup_seconds],
         }
 
         for episode in range(self.n_train):
-            step_started_at = time.perf_counter()
+            step_started_at = synchronized_time(self.env.device)
             gradient, objective = self.estimate_gradient(self.config.seed + episode * (self.n_particles + 1))
 
             optimizer.zero_grad()
             self.set_flat_gradient(-gradient)
             optimizer.step()
-            history["train_step_seconds"].append(time.perf_counter() - step_started_at)
+            objective_value = float(objective.detach().cpu())
+            gradient_norm_value = float(gradient.norm().detach().cpu())
+            history["train_step_seconds"].append(synchronized_time(self.env.device) - step_started_at)
 
-            history["objective"].append(float(objective.detach().cpu()))
-            history["gradient_norm"].append(float(gradient.norm().detach().cpu()))
+            history["objective"].append(objective_value)
+            history["gradient_norm"].append(gradient_norm_value)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
-                validation_started_at = time.perf_counter()
+                validation_started_at = synchronized_time(self.env.device)
                 with torch.no_grad():
                     validation = self.evaluate(seed=self.config.seed + self.n_train)
-                history["validation_seconds"].append(time.perf_counter() - validation_started_at)
-                history["validation_objective"].append(float(validation.detach().cpu()))
+                validation_value = float(validation.detach().cpu())
+                history["validation_seconds"].append(synchronized_time(self.env.device) - validation_started_at)
+                history["validation_objective"].append(validation_value)
 
         return self.policy, history
 

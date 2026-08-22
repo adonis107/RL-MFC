@@ -143,6 +143,8 @@ def runtime_table(runs):
     return (
         df.groupby(["env", "algorithm", "perturbation", "horizon", "flow"], dropna=False, as_index=False)
         .agg(
+            setup_seconds_mean=("setup_seconds", "mean"),
+            setup_seconds_std=("setup_seconds", "std"),
             train_step_seconds_mean=("train_step_seconds", "mean"),
             train_step_seconds_std=("train_step_seconds", "std"),
             validation_seconds_mean=("validation_seconds", "mean"),
@@ -157,6 +159,7 @@ def runtime_table(runs):
         )
         .fillna(
             {
+                "setup_seconds_std": 0.0,
                 "train_step_seconds_std": 0.0,
                 "validation_seconds_std": 0.0,
                 "elapsed_seconds_std": 0.0,

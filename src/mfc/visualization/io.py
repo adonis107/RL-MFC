@@ -112,6 +112,7 @@ def runs_dataframe(runs):
                 "flow": metadata["flow"],
                 "seed": metadata["seed"],
                 "elapsed_seconds": summary.get("elapsed_seconds", metadata.get("elapsed_seconds")),
+                "setup_seconds": summary.get("setup_seconds", metadata.get("setup_seconds", 0.0)),
                 "train_step_seconds": summary.get(
                     "train_step_seconds",
                     metadata.get("train_step_seconds", summary.get("elapsed_seconds", metadata.get("elapsed_seconds"))),

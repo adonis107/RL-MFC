@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 import importlib
 import inspect
-import time
 
 import torch
 from torch import nn
 
 from .discrete_validation import evaluate_initial_distributions, mean_field_next_law
+from .timing import synchronized_time
 
 
 @dataclass(frozen=True)
@@ -204,34 +204,40 @@ class Reinforce:
         return -(rollout["score"] * advantages).mean()
 
     def train(self):
+        setup_started_at = synchronized_time(self.env.device)
         optimizer = self.optimizer()
+        setup_seconds = synchronized_time(self.env.device) - setup_started_at
         history = {
             "objective": [],
             "loss": [],
             "validation_objective": [],
             "train_step_seconds": [],
             "validation_seconds": [],
+            "setup_seconds": [setup_seconds],
         }
 
         for episode in range(self.n_train):
-            step_started_at = time.perf_counter()
+            step_started_at = synchronized_time(self.env.device)
             rollout = self.rollout(seed=self.config.seed + episode)
             loss = self.loss(rollout)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            history["train_step_seconds"].append(time.perf_counter() - step_started_at)
+            objective_value = float(rollout["objective"].detach().cpu())
+            loss_value = float(loss.detach().cpu())
+            history["train_step_seconds"].append(synchronized_time(self.env.device) - step_started_at)
 
-            history["objective"].append(float(rollout["objective"].detach().cpu()))
-            history["loss"].append(float(loss.detach().cpu()))
+            history["objective"].append(objective_value)
+            history["loss"].append(loss_value)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
-                validation_started_at = time.perf_counter()
+                validation_started_at = synchronized_time(self.env.device)
                 with torch.no_grad():
                     validation = self.evaluate(seed=self.config.seed + self.n_train)
-                history["validation_seconds"].append(time.perf_counter() - validation_started_at)
-                history["validation_objective"].append(float(validation.detach().cpu()))
+                validation_value = float(validation.detach().cpu())
+                history["validation_seconds"].append(synchronized_time(self.env.device) - validation_started_at)
+                history["validation_objective"].append(validation_value)
 
         return self.policy, history
 

@@ -248,9 +248,10 @@ def run_training(args):
     started_at = time.perf_counter()
     policy, history = algorithm.train()
     elapsed_seconds = time.perf_counter() - started_at
+    setup_seconds = history_time_sum(history, "setup_seconds")
     train_step_seconds = history_time_sum(history, "train_step_seconds")
     validation_seconds = history_time_sum(history, "validation_seconds")
-    unaccounted_seconds = max(0.0, elapsed_seconds - train_step_seconds - validation_seconds)
+    unaccounted_seconds = max(0.0, elapsed_seconds - setup_seconds - train_step_seconds - validation_seconds)
 
     out_dir = output_directory(args)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +268,7 @@ def run_training(args):
         "algorithm_config": {key: json_ready(value) for key, value in asdict(algorithm.config).items()},
         "simulator_budget_estimate": simulator_budget_estimate(algorithm),
         "elapsed_seconds": elapsed_seconds,
+        "setup_seconds": setup_seconds,
         "train_step_seconds": train_step_seconds,
         "validation_seconds": validation_seconds,
         "unaccounted_seconds": unaccounted_seconds,
@@ -286,6 +288,7 @@ def run_training(args):
         if history["validation_objective"]
         else None,
         "elapsed_seconds": elapsed_seconds,
+        "setup_seconds": setup_seconds,
         "train_step_seconds": train_step_seconds,
         "validation_seconds": validation_seconds,
         "unaccounted_seconds": unaccounted_seconds,
