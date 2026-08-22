@@ -18,9 +18,31 @@ def vector_std_norm(values):
 
 
 def z_ratio(signal, standard_error):
+    """Return a norm-to-SE ratio.
+
+    For vector norms this is not a conventional signed z-score: under a zero
+    mean error, its root-mean-square null baseline is about 1 rather than 0.
+    Prefer the accompanying chi-square columns for a null-aware readout.
+    """
+    signal = torch.as_tensor(signal)
+    standard_error = torch.as_tensor(standard_error)
     if not torch.isfinite(standard_error).item() or standard_error.item() <= 0:
         return float("nan")
     return float(signal / standard_error)
+
+
+def norm_chi_square(signal, standard_error, dimension):
+    """Approximate a vector norm-to-SE ratio as a chi-square statistic."""
+    ratio = z_ratio(signal, standard_error)
+    if dimension <= 0 or not torch.isfinite(torch.tensor(ratio)).item():
+        return float("nan"), float("nan")
+
+    statistic = dimension * ratio**2
+    pvalue = torch.special.gammaincc(
+        torch.tensor(0.5 * dimension, dtype=torch.float64),
+        torch.tensor(0.5 * statistic, dtype=torch.float64),
+    )
+    return float(statistic), float(pvalue)
 
 
 def reward_gradient(env, policy, lambda_):
@@ -88,6 +110,8 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
     bias_norm = (mean_estimate - exact).norm()
     estimate_std = vector_std_norm(estimates)
     estimate_se = estimate_std / n_replications**0.5
+    n_parameters = exact.numel()
+    bias_chi2_stat, bias_chi2_pvalue = norm_chi_square(bias_norm, estimate_se, n_parameters)
 
     row = {
         "env": metadata["env"],
@@ -95,11 +119,16 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         "flow": metadata["flow"],
         "horizon": metadata["horizon"],
         "lambda": lambda_,
+        "n_parameters": n_parameters,
         "n_replications": n_replications,
         "bias_norm": float(bias_norm),
         "estimate_std": float(estimate_std),
         "estimate_se": float(estimate_se),
         "bias_z": z_ratio(bias_norm, estimate_se),
+        "bias_z_null_rms": 1.0,
+        "bias_chi2_stat": bias_chi2_stat,
+        "bias_chi2_df": n_parameters,
+        "bias_chi2_pvalue": bias_chi2_pvalue,
         "mse": float(error.square().mean()),
         "cosine_similarity": float(torch.nn.functional.cosine_similarity(mean_estimate, exact, dim=0)),
         "exact_gradient_norm": float(exact.norm()),
@@ -222,13 +251,24 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
     correction_se = correction_std / n_replications**0.5
     full_mean = full_gradients.mean(dim=0)
     policy_mean = policy_gradients.mean(dim=0)
+    n_parameters = correction_mean.numel()
+    correction_chi2_stat, correction_chi2_pvalue = norm_chi_square(
+        correction_mean.norm(),
+        correction_se,
+        n_parameters,
+    )
 
+    table["n_parameters"] = n_parameters
     table["full_gradient_mean_norm"] = float(full_mean.norm())
     table["policy_only_gradient_mean_norm"] = float(policy_mean.norm())
     table["correction_mean_norm"] = float(correction_mean.norm())
     table["correction_std"] = float(correction_std)
     table["correction_se"] = float(correction_se)
     table["correction_z"] = z_ratio(correction_mean.norm(), correction_se)
+    table["correction_z_null_rms"] = 1.0
+    table["correction_chi2_stat"] = correction_chi2_stat
+    table["correction_chi2_df"] = n_parameters
+    table["correction_chi2_pvalue"] = correction_chi2_pvalue
     table["correction_mean_fraction"] = float(correction_mean.norm() / full_mean.norm().clamp_min(1e-12))
     table["full_policy_mean_cosine"] = float(torch.nn.functional.cosine_similarity(full_mean, policy_mean, dim=0))
     return table
