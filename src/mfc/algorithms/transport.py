@@ -173,7 +173,7 @@ class DiscreteTransport(MFReinforce):
             base_rewards.append(self.env.reward(base_states, law, base_actions))
             rewards.append(self.env.reward(states, perturbed_law, actions))
             action_log_probs.append(log_probs)
-            law_scores.append(self.simplex_score_h(q) @ sensitivities[t][:-1])
+            law_scores.append(self.simplex_score_h(q))
 
             with torch.no_grad():
                 base_states = self.sample_next_state(t, base_states, law, base_actions, generator)
@@ -183,17 +183,18 @@ class DiscreteTransport(MFReinforce):
         terminal_law = self.perturb_law(laws[-1], q_terminal, self.lambda_)
         terminal_reward = self.env.terminal_reward(states, terminal_law)
         base_terminal_reward = self.env.terminal_reward(base_states, laws[-1])
-        law_scores.append(self.simplex_score_h(q_terminal) @ sensitivities[-1][:-1])
+        law_scores.append(self.simplex_score_h(q_terminal))
 
         returns = self.discounted_returns(rewards, terminal_reward)[0]
         base_return = self.discounted_returns(base_rewards, base_terminal_reward)[0]
         advantages = returns - returns.mean() if self.config.baseline else returns
         action_score = torch.stack(action_log_probs).sum(dim=0)
         action_gradient = self.flat_grad((action_score * advantages.detach()).sum())
-        perturbation_score = torch.stack(law_scores).sum(dim=0)
-        law_gradient = -((1.0 - self.lambda_) / self.lambda_) * (
-            perturbation_score * advantages.detach().unsqueeze(-1)
-        ).sum(dim=0)
+        weights = advantages.detach()
+        law_gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
+        for index, simplex_score in enumerate(law_scores):
+            law_gradient = law_gradient + (simplex_score.transpose(0, 1) @ weights) @ sensitivities[index][:-1]
+        law_gradient = -((1.0 - self.lambda_) / self.lambda_) * law_gradient
         return (action_gradient + law_gradient) / self.n_particles, base_return.mean()
 
     def estimate_gradient(self, seed):

@@ -379,7 +379,7 @@ class MFReinforce:
             perturbed_actions, log_probs = self.sample_actions_with_log_probs(
                 t, perturbed_states, perturbed_law, generator
             )
-            law_scores.append(noises[t] @ logit_gradients[t] / self.perturbation_eta)
+            law_scores.append(noises[t])
             action_log_probs.append(log_probs)
 
             rewards.append(self.env.reward(base_states, law, base_actions))
@@ -393,12 +393,16 @@ class MFReinforce:
         perturbed_terminal_law = self.perturbed_law(log_laws[-1].unsqueeze(0), noises[-1])
         terminal_reward = self.env.terminal_reward(base_states, terminal_law)
         perturbed_terminal_reward = self.env.terminal_reward(perturbed_states, perturbed_terminal_law)
-        law_scores.append(noises[-1] @ logit_gradients[-1] / self.perturbation_eta)
+        law_scores.append(noises[-1])
 
         returns = torch.stack(self.discounted_returns(perturbed_rewards, perturbed_terminal_reward))
         advantages = returns - returns.mean(dim=1, keepdim=True) if self.config.baseline else returns
         action_gradient = self.flat_grad((torch.stack(action_log_probs) * advantages[:-1].detach()).sum())
-        law_gradient = (torch.stack(law_scores) * advantages.detach().unsqueeze(-1)).sum(dim=(0, 1))
+        weights = advantages.detach()
+        law_gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
+        for index, noise in enumerate(law_scores):
+            law_gradient = law_gradient + (noise.transpose(0, 1) @ weights[index]) @ logit_gradients[index]
+        law_gradient = law_gradient / self.perturbation_eta
         base_returns = self.discounted_returns(rewards, terminal_reward)
         return (action_gradient + law_gradient) / self.n_particles, base_returns[0].mean()
 
