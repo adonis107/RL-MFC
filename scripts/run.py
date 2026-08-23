@@ -31,7 +31,7 @@ ADAPTIVE_REPLICATIONS = 4
 TRANSPORT_AUXILIARY_GRADIENTS = {
     "cybersecurity": 20,
     "lq": 20,
-    "portfolio": 20,
+    "portfolio": 200,
 }
 
 

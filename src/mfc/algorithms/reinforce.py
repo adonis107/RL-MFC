@@ -9,6 +9,13 @@ from .discrete_validation import evaluate_initial_distributions, mean_field_next
 from .timing import synchronized_time
 
 
+def exact_continuous_validation_objective(env, policy):
+    value = env.objective(policy, lambda_=0.0)
+    if type(env).__name__ == "LQ":
+        return -value
+    return value
+
+
 @dataclass(frozen=True)
 class ReinforceConfig:
     n_train: int | None = None
@@ -189,12 +196,15 @@ class Reinforce:
     def evaluate(self, n_particles=None, horizon=None, seed=None):
         """Evaluate the policy.
 
-        Discrete environments use exact deterministic validation, so n_particles
-        and seed only affect continuous Monte Carlo rollouts.
+        Discrete environments and continuous environments with closed-form
+        objectives use exact deterministic validation. The n_particles and seed
+        arguments are kept for Monte Carlo fallback compatibility.
         """
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
         if hasattr(self.env, "n_states"):
             return self.evaluate_discrete(horizon)
+        if hasattr(self.env, "objective"):
+            return exact_continuous_validation_objective(self.env, self.policy)
         return self.rollout(n_particles=n_particles, horizon=horizon, seed=seed)["objective"]
 
     def loss(self, rollout):

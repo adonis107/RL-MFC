@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from .mfreinforce import MFReinforce
+from .reinforce import exact_continuous_validation_objective
 from .timing import synchronized_time
 
 
@@ -1063,6 +1064,9 @@ class ContinuousTransport:
         return gradient, objective
 
     def evaluate(self, n_particles=None, horizon=None, seed=None):
+        if hasattr(self.env, "objective"):
+            return exact_continuous_validation_objective(self.env, self.policy)
+
         n_particles = self.n_particles if n_particles is None else n_particles
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
         moments = self.mean_field_moment_flow(horizon=horizon, seed=seed)
