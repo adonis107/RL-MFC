@@ -25,7 +25,7 @@ TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
 DEFAULT_TRANSPORT_ETA = 0.85
 ADAPTIVE_INITIAL_LAMBDA = 0.2
 ADAPTIVE_INITIAL_ETA = 0.8
-ADAPTIVE_CHECKPOINT_INTERVAL = 500
+ADAPTIVE_CHECKPOINT_INTERVAL = 100
 ADAPTIVE_REPLICATIONS = 4
 # Reallocate a fixed transport budget toward the auxiliary sensitivity estimate
 # where n=1 is too noisy; trajectory particles are reduced to keep cost equal.

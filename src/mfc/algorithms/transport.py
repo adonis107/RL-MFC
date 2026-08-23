@@ -31,7 +31,7 @@ class DiscreteTransportConfig:
 
 @dataclass(frozen=True)
 class AdaptiveDiscreteTransportConfig(DiscreteTransportConfig):
-    adaptive_checkpoint_interval: int = 500
+    adaptive_checkpoint_interval: int = 100
     adaptive_replications: int = 4
     contraction_lambda: float = 0.5
     contraction_eta: float = 0.75
@@ -625,7 +625,7 @@ class ContinuousTransportConfig:
 
 @dataclass(frozen=True)
 class AdaptiveContinuousTransportConfig(ContinuousTransportConfig):
-    adaptive_checkpoint_interval: int = 500
+    adaptive_checkpoint_interval: int = 100
     adaptive_replications: int = 4
     contraction_lambda: float = 0.5
     contraction_eta: float = 0.75
