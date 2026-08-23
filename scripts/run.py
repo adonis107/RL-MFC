@@ -19,14 +19,30 @@ CONTINUOUS_REFERENCE = {
     "portfolio": {"n_particles": 500, "n_gradient": 1},
 }
 
+TRANSPORT_LAMBDAS = (0.05, 0.1, 0.2, 0.4, 0.8)
+TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
+DEFAULT_TRANSPORT_ETA = 0.85
+ADAPTIVE_INITIAL_LAMBDA = 0.2
+ADAPTIVE_INITIAL_ETA = 0.8
+ADAPTIVE_CHECKPOINT_INTERVAL = 500
+ADAPTIVE_REPLICATIONS = 4
+# Reallocate a fixed transport budget toward the auxiliary sensitivity estimate
+# where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
+TRANSPORT_AUXILIARY_GRADIENTS = {
+    "cybersecurity": 20,
+    "lq": 20,
+    "portfolio": 20,
+}
 
-def job(env, algorithm, horizon, flow="exact", perturbation=None):
+
+def job(env, algorithm, horizon, flow="exact", perturbation=None, eta=None):
     return {
         "env": env,
         "algorithm": algorithm,
         "horizon": horizon,
         "flow": flow,
         "perturbation": perturbation,
+        "eta": eta,
     }
 
 
@@ -37,37 +53,66 @@ def experiment_plan(env):
             jobs.append(job(env, "reinforce", horizon))
             for flow in ("exact", "particle"):
                 jobs.append(job(env, "mfreinforce", horizon, flow=flow, perturbation=0.2))
-                for lambda_ in (0.05, 0.1, 0.2, 0.4, 0.8):
-                    jobs.append(job(env, "transport", horizon, flow=flow, perturbation=lambda_))
+                for lambda_ in TRANSPORT_LAMBDAS:
+                    for eta in TWOSTATE_TRANSPORT_ETAS:
+                        jobs.append(job(env, "transport", horizon, flow=flow, perturbation=lambda_, eta=eta))
+                jobs.append(
+                    job(
+                        env,
+                        "adaptive_transport",
+                        horizon,
+                        flow=flow,
+                        perturbation=ADAPTIVE_INITIAL_LAMBDA,
+                        eta=ADAPTIVE_INITIAL_ETA,
+                    )
+                )
         return jobs
 
     if env == "cybersecurity":
         jobs = [job(env, "reinforce", 3)]
         jobs.append(job(env, "mfreinforce", 3, perturbation=1.0))
-        jobs.extend(job(env, "transport", 3, perturbation=lambda_) for lambda_ in (0.1, 0.2, 0.4))
+        jobs.extend(
+            job(env, "transport", 3, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+            for lambda_ in (0.1, 0.2, 0.4)
+        )
+        jobs.append(job(env, "adaptive_transport", 3, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         return jobs
 
     if env == "distribution":
         jobs = [job(env, "reinforce", 5)]
         jobs.append(job(env, "mfreinforce", 5, perturbation=2.0))
-        jobs.extend(job(env, "transport", 5, perturbation=lambda_) for lambda_ in (0.1, 0.2, 0.4))
+        jobs.extend(
+            job(env, "transport", 5, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+            for lambda_ in (0.1, 0.2, 0.4)
+        )
+        jobs.append(job(env, "adaptive_transport", 5, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         return jobs
 
     if env == "advertising":
         jobs = [job(env, "reinforce", 5)]
         jobs.append(job(env, "mfreinforce", 5, perturbation=1.0))
-        jobs.extend(job(env, "transport", 5, perturbation=lambda_) for lambda_ in (0.1, 0.2, 0.4))
+        jobs.extend(
+            job(env, "transport", 5, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+            for lambda_ in (0.1, 0.2, 0.4)
+        )
+        jobs.append(job(env, "adaptive_transport", 5, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         return jobs
 
     if env == "lq":
         jobs = [job(env, "reinforce", 20)]
         for flow in ("exact", "particle"):
-            jobs.extend(job(env, "transport", 20, flow=flow, perturbation=lambda_) for lambda_ in (0.05, 0.1, 0.2, 0.4, 0.8))
+            jobs.extend(
+                job(env, "transport", 20, flow=flow, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+                for lambda_ in TRANSPORT_LAMBDAS
+            )
         return jobs
 
     if env == "portfolio":
         jobs = [job(env, "reinforce", 10)]
-        jobs.extend(job(env, "transport", 10, perturbation=lambda_) for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4))
+        jobs.extend(
+            job(env, "transport", 10, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+            for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4)
+        )
         return jobs
 
     raise ValueError(f"Unknown environment: {env}")
@@ -88,7 +133,11 @@ def mf_reference_cost(env, horizon):
     return trajectory_cost + state_gradient_cost
 
 
-def fair_run_parameters(job_spec):
+def fair_run_parameters(
+    job_spec,
+    adaptive_checkpoint_interval=ADAPTIVE_CHECKPOINT_INTERVAL,
+    adaptive_replications=ADAPTIVE_REPLICATIONS,
+):
     env = job_spec["env"]
     algorithm = job_spec["algorithm"]
     horizon = job_spec["horizon"]
@@ -103,15 +152,31 @@ def fair_run_parameters(job_spec):
         parameters["n_logit_gradient"] = ref_gradient
     elif algorithm == "reinforce":
         parameters["n_particles"] = max(1, round(base_cost / horizon))
-    elif algorithm == "transport":
-        scale = base_cost / (horizon * (ref_particles + ref_gradient))
-        parameters["n_particles"] = max(1, round(scale * ref_particles))
-        if env in DISCRETE_REFERENCE:
-            parameters["n_logit_gradient"] = max(1, round(scale * ref_gradient))
+    elif algorithm in {"transport", "adaptive_transport"}:
+        adaptive_factor = 1.0
+        if algorithm == "adaptive_transport":
+            if adaptive_checkpoint_interval:
+                adaptive_factor += 2.0 * adaptive_replications / adaptive_checkpoint_interval
+        per_step_budget = (base_cost / horizon) / adaptive_factor
+        auxiliary_gradient = TRANSPORT_AUXILIARY_GRADIENTS.get(env)
+        if auxiliary_gradient is None:
+            scale = per_step_budget / (ref_particles + ref_gradient)
+            if algorithm == "adaptive_transport":
+                auxiliary_gradient = max(1, int(scale * ref_gradient))
+                parameters["n_particles"] = max(1, int(per_step_budget - auxiliary_gradient))
+            else:
+                parameters["n_particles"] = max(1, round(scale * ref_particles))
+                auxiliary_gradient = max(1, round(scale * ref_gradient))
         else:
-            parameters["n_law_gradient"] = max(1, round(scale * ref_gradient))
+            auxiliary_gradient = min(auxiliary_gradient, max(1, int(per_step_budget) - 1))
+            parameters["n_particles"] = max(1, int(per_step_budget - auxiliary_gradient))
 
-    if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport"}:
+        if env in DISCRETE_REFERENCE:
+            parameters["n_logit_gradient"] = auxiliary_gradient
+        else:
+            parameters["n_law_gradient"] = auxiliary_gradient
+
+    if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport", "adaptive_transport"}:
         parameters["n_flow_particles"] = ref_particles
 
     return parameters
@@ -137,8 +202,20 @@ def command_for(job_spec, seed, args):
 
     if job_spec["perturbation"] is not None:
         command.extend(["--perturbation", str(job_spec["perturbation"])])
+    if job_spec["algorithm"] in {"transport", "adaptive_transport"}:
+        eta = args.eta if args.eta is not None else job_spec.get("eta")
+        if eta is not None:
+            command.extend(["--eta", str(eta)])
 
-    fair_parameters = fair_run_parameters(job_spec) if args.budget_mode == "fair" else {}
+    fair_parameters = (
+        fair_run_parameters(
+            job_spec,
+            adaptive_checkpoint_interval=args.adaptive_checkpoint_interval or ADAPTIVE_CHECKPOINT_INTERVAL,
+            adaptive_replications=args.adaptive_replications or ADAPTIVE_REPLICATIONS,
+        )
+        if args.budget_mode == "fair"
+        else {}
+    )
 
     optional_values = {
         "--device": args.device,
@@ -157,6 +234,8 @@ def command_for(job_spec, seed, args):
         else fair_parameters.get("n_flow_particles"),
         "--validation-interval": args.validation_interval,
         "--simplex-sigma": args.simplex_sigma,
+        "--adaptive-checkpoint-interval": args.adaptive_checkpoint_interval,
+        "--adaptive-replications": args.adaptive_replications,
     }
     for flag, value in optional_values.items():
         if value is not None:
@@ -191,6 +270,7 @@ def parse_args():
     parser.add_argument("--device", default=None)
     parser.add_argument("--n-train", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--eta", type=float, default=None)
     parser.add_argument("--n-particles", type=int, default=None)
     parser.add_argument("--n-logit-gradient", type=int, default=None)
     parser.add_argument("--n-law-gradient", type=int, default=None)
@@ -198,6 +278,8 @@ def parse_args():
     parser.add_argument("--n-flow-particles", type=int, default=None)
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=None)
+    parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
+    parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")

@@ -71,7 +71,14 @@ def run_label(metadata):
         return "REINFORCE"
     if algorithm == "mfreinforce":
         return f"MF-REINFORCE eps={metadata['perturbation']:g}"
-    return f"Transport lambda={metadata['perturbation']:g}"
+    if algorithm == "adaptive_transport":
+        initial_eta = metadata.get("algorithm_config", {}).get("eta", metadata.get("eta"))
+        return f"Adaptive discrete transport lambda0={metadata['perturbation']:g}, eta0={initial_eta:g}"
+    label = f"Transport lambda={metadata['perturbation']:g}"
+    eta = metadata.get("eta")
+    if eta is not None:
+        label += f", eta={eta:g}"
+    return label
 
 
 def best_runs_by_label(runs, prefer_validation=True):
@@ -84,12 +91,8 @@ def best_runs_by_label(runs, prefer_validation=True):
             value = summary.get("last_objective")
         if value is None:
             continue
-        key = (
-            metadata["algorithm"],
-            metadata["perturbation"],
-            metadata["horizon"],
-            metadata["flow"],
-        )
+        eta_key = None if metadata["algorithm"] == "adaptive_transport" else metadata.get("eta")
+        key = (metadata["algorithm"], metadata["perturbation"], eta_key, metadata["horizon"], metadata["flow"])
         if key not in best or value > best[key][0]:
             best[key] = (value, run)
     return [run for _, run in best.values()]
@@ -107,7 +110,7 @@ def runs_dataframe(runs):
                 "algorithm": metadata["algorithm"],
                 "label": run_label(metadata),
                 "perturbation": metadata["perturbation"],
-                "eta": metadata["eta"],
+                "eta": metadata.get("eta"),
                 "horizon": metadata["horizon"],
                 "flow": metadata["flow"],
                 "seed": metadata["seed"],
@@ -153,6 +156,7 @@ def validation_dataframe(runs):
                     "algorithm": metadata["algorithm"],
                     "label": run_label(metadata),
                     "perturbation": metadata["perturbation"],
+                    "eta": metadata.get("eta"),
                     "horizon": metadata["horizon"],
                     "flow": metadata["flow"],
                     "seed": metadata["seed"],

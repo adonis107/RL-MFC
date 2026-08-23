@@ -202,7 +202,7 @@ def plot_flow_comparison(runs, env, horizon=None, ax=None, save_path=None):
         raise ValueError("No transport validation data matched the requested filters.")
 
     grouped = (
-        df.groupby(["perturbation", "flow", "step"], as_index=False)["validation_reward"]
+        df.groupby(["perturbation", "eta", "flow", "step"], dropna=False, as_index=False)["validation_reward"]
         .agg(["mean", "std"])
         .reset_index()
         .fillna({"std": 0.0})
@@ -211,9 +211,11 @@ def plot_flow_comparison(runs, env, horizon=None, ax=None, save_path=None):
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 4.5))
 
-    for (lambda_, flow), group in grouped.groupby(["perturbation", "flow"], sort=False):
+    for (lambda_, eta, flow), group in grouped.groupby(["perturbation", "eta", "flow"], sort=False):
         group = group.sort_values("step")
         label = f"lambda={lambda_:g}, {flow}"
+        if pd.notna(eta) and eta != lambda_:
+            label = f"lambda={lambda_:g}, eta={eta:g}, {flow}"
         ax.plot(group["step"], group["mean"], label=label)
 
     ax.set_xlabel("training step")

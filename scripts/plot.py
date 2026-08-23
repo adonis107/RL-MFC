@@ -36,6 +36,17 @@ def save_current(path):
     plt.close()
 
 
+def perturbation_stem(metadata):
+    perturbation = metadata["perturbation"] if metadata["perturbation"] is not None else "none"
+    if metadata["algorithm"] not in {"transport", "adaptive_transport"}:
+        return str(perturbation)
+
+    eta = metadata.get("algorithm_config", {}).get("eta", metadata.get("eta"))
+    if eta is None:
+        return str(perturbation)
+    return f"{perturbation}_eta_{eta}"
+
+
 def make_standard_outputs(
     env,
     results_root,
@@ -88,10 +99,11 @@ def make_standard_outputs(
             table.insert(0, "seed", metadata["seed"])
             table.insert(0, "flow", metadata["flow"])
             table.insert(0, "horizon", metadata["horizon"])
+            table.insert(0, "eta", metadata.get("eta"))
             table.insert(0, "perturbation", metadata["perturbation"])
             table.insert(0, "label", (
                 f"{metadata['algorithm']}_"
-                f"{metadata['perturbation'] if metadata['perturbation'] is not None else 'none'}_"
+                f"{perturbation_stem(metadata)}_"
                 f"{metadata['flow']}"
             ))
             rows.append(table)
@@ -102,7 +114,7 @@ def make_standard_outputs(
         metadata = run["metadata"]
         stem = (
             f"{metadata['algorithm']}_"
-            f"{metadata['perturbation'] if metadata['perturbation'] is not None else 'none'}_"
+            f"{perturbation_stem(metadata)}_"
             f"T_{metadata['horizon']}_{metadata['flow']}"
         )
         if env == "distribution":

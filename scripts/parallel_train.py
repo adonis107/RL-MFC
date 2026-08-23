@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--device", default=None)
     parser.add_argument("--n-train", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--eta", type=float, default=None)
     parser.add_argument("--n-particles", type=int, default=None)
     parser.add_argument("--n-logit-gradient", type=int, default=None)
     parser.add_argument("--n-law-gradient", type=int, default=None)
@@ -32,6 +33,8 @@ def parse_args():
     parser.add_argument("--n-flow-particles", type=int, default=None)
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=None)
+    parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
+    parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
@@ -70,7 +73,7 @@ def train_args_for(job_spec, seed, args):
         env=job_spec["env"],
         algorithm=job_spec["algorithm"],
         perturbation=job_spec["perturbation"],
-        eta=None,
+        eta=args.eta if args.eta is not None else job_spec.get("eta"),
         horizon=job_spec["horizon"],
         flow=job_spec["flow"],
         seed=seed,
@@ -92,12 +95,16 @@ def build_records(args):
     results_root = Path(args.results_root)
     logs_root = args.logs_root or results_root / "logs"
     records = []
+    seen_output_dirs = set()
 
     for env in selected_envs:
         for job_spec in run_plan.experiment_plan(env):
             for seed in args.seeds:
                 train_args = train_args_for(job_spec, seed, args)
                 output_dir = train_script.output_directory(train_args)
+                if output_dir in seen_output_dirs:
+                    continue
+                seen_output_dirs.add(output_dir)
                 records.append(
                     {
                         "command": run_plan.command_for(job_spec, seed, args),

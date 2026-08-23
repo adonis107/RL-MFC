@@ -41,6 +41,7 @@ def twostate_policy_error_table(runs):
                 "label": run_label(run["metadata"]),
                 "flow": run["metadata"]["flow"],
                 "horizon": run["metadata"]["horizon"],
+                "eta": run["metadata"].get("eta"),
                 "seed": run["metadata"]["seed"],
                 "mean_abs_policy_error": float(error.mean()),
                 "max_abs_policy_error": float(error.max()),
@@ -74,6 +75,7 @@ def advertising_policy_error_table(runs):
                 "label": run_label(run["metadata"]),
                 "flow": run["metadata"]["flow"],
                 "horizon": run["metadata"]["horizon"],
+                "eta": run["metadata"].get("eta"),
                 "seed": run["metadata"]["seed"],
                 "mean_abs_ad_probability_error": float(errors.mean().detach().cpu()),
                 "max_abs_ad_probability_error": float(errors.max().detach().cpu()),
@@ -95,6 +97,7 @@ def objective_table(runs):
             "label": run_label(metadata),
             "flow": metadata["flow"],
             "horizon": metadata["horizon"],
+            "eta": metadata.get("eta"),
             "seed": metadata["seed"],
             "validation_reward": run["summary"].get("last_validation_objective"),
         }
@@ -140,8 +143,10 @@ def runtime_table(runs):
     df = runs_dataframe(runs)
     if df.empty:
         return df
+    df = df.copy()
+    df["eta_group"] = df["eta"].where(df["algorithm"] != "adaptive_transport")
     return (
-        df.groupby(["env", "algorithm", "perturbation", "horizon", "flow"], dropna=False, as_index=False)
+        df.groupby(["env", "algorithm", "perturbation", "eta_group", "horizon", "flow"], dropna=False, as_index=False)
         .agg(
             setup_seconds_mean=("setup_seconds", "mean"),
             setup_seconds_std=("setup_seconds", "std"),
@@ -165,6 +170,7 @@ def runtime_table(runs):
                 "elapsed_seconds_std": 0.0,
             }
         )
+        .rename(columns={"eta_group": "eta"})
     )
 
 
@@ -191,6 +197,7 @@ def discrete_transport_tv_bound_table(runs):
                 "horizon": metadata["horizon"],
                 "seed": metadata["seed"],
                 "lambda": lambda_,
+                "eta": metadata.get("eta"),
                 "max_tv_upper_bound": float(max_tv_bound.max().detach().cpu()),
                 "satisfies_lambda_bound": bool((max_tv_bound <= lambda_ + 1e-12).all().detach().cpu()),
             }

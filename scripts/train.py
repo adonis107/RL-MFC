@@ -9,6 +9,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 
 from mfc.algorithms import (
+    AdaptiveDiscreteTransport,
+    AdaptiveDiscreteTransportConfig,
     ContinuousTransport,
     ContinuousTransportConfig,
     DiscreteTransport,
@@ -64,7 +66,7 @@ def perturbation_label(algorithm, perturbation, eta):
         return "none"
     if algorithm == "mfreinforce":
         return f"eps_{perturbation:g}"
-    if eta is None or eta == perturbation:
+    if eta is None:
         return f"lambda_{perturbation:g}"
     return f"lambda_{perturbation:g}_eta_{eta:g}"
 
@@ -127,6 +129,31 @@ def build_algorithm(args, env):
             reuse_state_gradient=not args.no_reuse_state_gradient,
         )
         return MFReinforce(env, config=config)
+
+    if args.algorithm == "adaptive_transport":
+        if args.env not in DISCRETE_ENVS:
+            raise ValueError("Adaptive discrete transport is only configured for discrete-state environments.")
+        if args.perturbation is None:
+            raise ValueError("Adaptive discrete transport requires --perturbation initial lambda.")
+        eta = 0.8 if args.eta is None else args.eta
+        config = AdaptiveDiscreteTransportConfig(
+            **common,
+            lambda_=args.perturbation,
+            eta=eta,
+            flow=args.flow,
+            n_flow_particles=args.n_flow_particles,
+            n_logit_gradient=args.n_logit_gradient,
+            simplex_sigma=args.simplex_sigma,
+            baseline=use_baseline,
+            reuse_state_gradient=not args.no_reuse_state_gradient,
+            adaptive_checkpoint_interval=args.adaptive_checkpoint_interval
+            if args.adaptive_checkpoint_interval is not None
+            else AdaptiveDiscreteTransportConfig.adaptive_checkpoint_interval,
+            adaptive_replications=args.adaptive_replications
+            if args.adaptive_replications is not None
+            else AdaptiveDiscreteTransportConfig.adaptive_replications,
+        )
+        return AdaptiveDiscreteTransport(env, config=config)
 
     if args.algorithm == "transport":
         if args.perturbation is None:
@@ -193,6 +220,14 @@ def simulator_budget_estimate(algorithm):
     if isinstance(algorithm, Reinforce):
         return particles * horizon
 
+    if isinstance(algorithm, AdaptiveDiscreteTransport):
+        gradient_samples = algorithm.n_logit_gradient
+        gradient_reuses = 1 if algorithm.config.reuse_state_gradient else particles
+        base_cost = horizon * particles + horizon * gradient_samples * gradient_reuses
+        interval = algorithm.config.adaptive_checkpoint_interval
+        overhead = 0.0 if not interval else 2.0 * algorithm.config.adaptive_replications / interval
+        return base_cost * (1.0 + overhead) + flow_extra
+
     if isinstance(algorithm, DiscreteTransport):
         gradient_samples = algorithm.n_logit_gradient
         gradient_reuses = 1 if algorithm.config.reuse_state_gradient else particles
@@ -219,6 +254,8 @@ def metadata_eta(args, algorithm):
     if args.algorithm == "mfreinforce":
         return algorithm.perturbation_eta
     if args.algorithm == "transport":
+        return algorithm.eta
+    if args.algorithm == "adaptive_transport":
         return algorithm.eta
     return args.eta
 
@@ -302,7 +339,12 @@ def run_training(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train one MFC experiment.")
     parser.add_argument("--env", choices=ENVIRONMENTS, required=True)
-    parser.add_argument("--algorithm", "--alg", choices=["reinforce", "mfreinforce", "transport"], required=True)
+    parser.add_argument(
+        "--algorithm",
+        "--alg",
+        choices=["reinforce", "mfreinforce", "transport", "adaptive_transport"],
+        required=True,
+    )
     parser.add_argument("--perturbation", type=maybe_float, default=None)
     parser.add_argument("--eta", type=maybe_float, default=None)
     parser.add_argument("--horizon", "--T", type=int, required=True)
@@ -320,6 +362,8 @@ def parse_args():
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=1.0)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default="mean")
+    parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
+    parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
     parser.add_argument("--no-reuse-state-gradient", action="store_true")

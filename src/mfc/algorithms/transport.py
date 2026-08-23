@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import importlib
 import inspect
 
@@ -25,6 +26,34 @@ class DiscreteTransportConfig:
     baseline: bool = True
     reuse_state_gradient: bool = True
     seed: int = 0
+
+
+@dataclass(frozen=True)
+class AdaptiveDiscreteTransportConfig(DiscreteTransportConfig):
+    adaptive_checkpoint_interval: int = 500
+    adaptive_replications: int = 4
+    contraction_lambda: float = 0.5
+    contraction_eta: float = 0.75
+    target_bias_lambda: float = 0.25
+    target_bias_eta: float = 0.25
+    bias_order_lambda: float = 1.0
+    bias_order_eta: float = 1.0
+    controller_lr_lambda: float = 0.05
+    controller_lr_eta: float = 0.05
+    controller_beta1_lambda: float = 0.9
+    controller_beta1_eta: float = 0.9
+    controller_beta2_lambda: float = 0.999
+    controller_beta2_eta: float = 0.999
+    controller_eps_lambda: float = 1e-8
+    controller_eps_eta: float = 1e-8
+    diagnostic_delta: float = 1e-12
+    lambda_min: float = 0.025
+    lambda_max: float = 0.95
+    eta_min: float = 0.2
+    eta_max: float = 0.98
+    direction_cosine_min: float = 0.0
+    direction_norm_min: float = 1e-12
+    direction_z: float = 1.0
 
 
 class DiscreteTransport(MFReinforce):
@@ -70,9 +99,10 @@ class DiscreteTransport(MFReinforce):
         a = -z / self.config.simplex_sigma**2
         return a / q[..., :-1] + a.sum(dim=-1, keepdim=True) / q[..., -1:] - 1.0 / q[..., :-1] + 1.0 / q[..., -1:]
 
-    def estimate_state_sensitivities(self, laws, seed, initial_distribution=None):
+    def estimate_state_sensitivities(self, laws, seed, initial_distribution=None, eta=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
+        eta = self.eta if eta is None else eta
 
         sensitivities = [
             torch.zeros(self.env.n_states, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
@@ -84,7 +114,7 @@ class DiscreteTransport(MFReinforce):
 
         for t in range(self.horizon):
             q = self.sample_simplex_batch(self.n_logit_gradient, generator)
-            perturbed_law = self.perturb_law(laws[t], q, self.eta)
+            perturbed_law = self.perturb_law(laws[t], q, eta)
             actions, log_probs = self.sample_actions_with_log_probs(t, states[-1], perturbed_law, generator)
             action_log_probs.append(log_probs)
             h_values.append(self.simplex_score_h(q))
@@ -92,7 +122,7 @@ class DiscreteTransport(MFReinforce):
             with torch.no_grad():
                 states.append(self.sample_next_state(t, states[-1], perturbed_law, actions, generator))
 
-        factor = (1.0 - self.eta) / self.eta
+        factor = (1.0 - eta) / eta
         for target_t in range(1, self.horizon + 1):
             numerator = torch.zeros(self.env.n_states - 1, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
 
@@ -153,9 +183,10 @@ class DiscreteTransport(MFReinforce):
         base_return = self.discounted_returns(base_rewards, base_terminal_reward)[0]
         return trajectory_score, trajectory_return, base_return
 
-    def batched_trajectory_gradient(self, laws, sensitivities, seed, initial_distribution=None):
+    def batched_trajectory_components(self, laws, seed, initial_distribution=None, lambda_=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
+        lambda_ = self.lambda_ if lambda_ is None else lambda_
 
         base_states = self.initial_states(self.n_particles, generator, initial_distribution)
         states = self.initial_states(self.n_particles, generator, initial_distribution)
@@ -168,7 +199,7 @@ class DiscreteTransport(MFReinforce):
             law = laws[t]
             base_actions, _ = self.sample_actions_with_log_probs(t, base_states, law.expand(self.n_particles, -1), generator)
             q = self.sample_simplex_batch(self.n_particles, generator)
-            perturbed_law = self.perturb_law(law, q, self.lambda_)
+            perturbed_law = self.perturb_law(law, q, lambda_)
             actions, log_probs = self.sample_actions_with_log_probs(t, states, perturbed_law, generator)
             base_rewards.append(self.env.reward(base_states, law, base_actions))
             rewards.append(self.env.reward(states, perturbed_law, actions))
@@ -180,7 +211,7 @@ class DiscreteTransport(MFReinforce):
                 states = self.sample_next_state(t, states, perturbed_law, actions, generator)
 
         q_terminal = self.sample_simplex_batch(self.n_particles, generator)
-        terminal_law = self.perturb_law(laws[-1], q_terminal, self.lambda_)
+        terminal_law = self.perturb_law(laws[-1], q_terminal, lambda_)
         terminal_reward = self.env.terminal_reward(states, terminal_law)
         base_terminal_reward = self.env.terminal_reward(base_states, laws[-1])
         law_scores.append(self.simplex_score_h(q_terminal))
@@ -191,11 +222,24 @@ class DiscreteTransport(MFReinforce):
         action_score = torch.stack(action_log_probs).sum(dim=0)
         action_gradient = self.flat_grad((action_score * advantages.detach()).sum())
         weights = advantages.detach()
+        return action_gradient, weights, law_scores, base_return.mean()
+
+    def combine_batched_trajectory_components(self, action_gradient, weights, law_scores, sensitivities, lambda_=None):
+        lambda_ = self.lambda_ if lambda_ is None else lambda_
         law_gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
         for index, simplex_score in enumerate(law_scores):
             law_gradient = law_gradient + (simplex_score.transpose(0, 1) @ weights) @ sensitivities[index][:-1]
-        law_gradient = -((1.0 - self.lambda_) / self.lambda_) * law_gradient
-        return (action_gradient + law_gradient) / self.n_particles, base_return.mean()
+        law_gradient = -((1.0 - lambda_) / lambda_) * law_gradient
+        return (action_gradient + law_gradient) / self.n_particles
+
+    def batched_trajectory_gradient(self, laws, sensitivities, seed, initial_distribution=None):
+        action_gradient, weights, law_scores, base_return = self.batched_trajectory_components(
+            laws,
+            seed,
+            initial_distribution=initial_distribution,
+        )
+        gradient = self.combine_batched_trajectory_components(action_gradient, weights, law_scores, sensitivities)
+        return gradient, base_return
 
     def estimate_gradient(self, seed):
         law_generator = torch.Generator(device=self.env.device)
@@ -255,8 +299,306 @@ class DiscreteTransport(MFReinforce):
         return gradient, objective
 
 
+class AdaptiveDiscreteTransport(DiscreteTransport):
+    def __init__(self, env, policy=None, config=AdaptiveDiscreteTransportConfig()):
+        super().__init__(env, policy=policy, config=config)
+        self._lambda = self._clamp_scale(config.lambda_ if config.lambda_ is not None else 0.2, config.lambda_min, config.lambda_max)
+        self._eta = self._clamp_scale(config.eta if config.eta is not None else 0.8, config.eta_min, config.eta_max)
+        self._rho_lambda = self._scale_to_logit(self._lambda, config.lambda_min, config.lambda_max)
+        self._rho_eta = self._scale_to_logit(self._eta, config.eta_min, config.eta_max)
+        self._moment_lambda = 0.0
+        self._moment_eta = 0.0
+        self._second_lambda = 0.0
+        self._second_eta = 0.0
+        self._controller_steps = 0
+
+    @property
+    def lambda_(self):
+        return self._lambda
+
+    @property
+    def eta(self):
+        return self._eta
+
+    @staticmethod
+    def _clamp_scale(value, lower, upper):
+        return min(max(float(value), lower), upper)
+
+    @staticmethod
+    def _scale_to_logit(value, lower, upper):
+        ratio = (value - lower) / (upper - lower)
+        ratio = min(max(ratio, 1e-12), 1.0 - 1e-12)
+        return math.log(ratio / (1.0 - ratio))
+
+    @staticmethod
+    def _logit_to_scale(rho, lower, upper):
+        sigmoid = 1.0 / (1.0 + math.exp(-rho))
+        return lower + (upper - lower) * sigmoid
+
+    @staticmethod
+    def _covariance_trace(samples):
+        if samples.shape[0] < 2:
+            return torch.zeros((), dtype=samples.dtype, device=samples.device)
+        centered = samples - samples.mean(dim=0)
+        return centered.square().sum() / (samples.shape[0] - 1)
+
+    @staticmethod
+    def _cosine(left, right):
+        denominator = left.norm() * right.norm()
+        if not torch.isfinite(denominator).item() or denominator.item() <= 0:
+            return float("nan")
+        return float((left @ right / denominator).detach().cpu())
+
+    def _controller_update(self, name, signal):
+        config = self.config
+        beta1 = getattr(config, f"controller_beta1_{name}")
+        beta2 = getattr(config, f"controller_beta2_{name}")
+        step_size = getattr(config, f"controller_lr_{name}")
+        eps = getattr(config, f"controller_eps_{name}")
+
+        moment_name = f"_moment_{name}"
+        second_name = f"_second_{name}"
+        rho_name = f"_rho_{name}"
+
+        moment = beta1 * getattr(self, moment_name) + (1.0 - beta1) * signal
+        second = beta2 * getattr(self, second_name) + (1.0 - beta2) * signal**2
+        setattr(self, moment_name, moment)
+        setattr(self, second_name, second)
+
+        corrected_moment = moment / (1.0 - beta1**self._controller_steps)
+        corrected_second = second / (1.0 - beta2**self._controller_steps)
+        rho = getattr(self, rho_name) - step_size * corrected_moment / (corrected_second**0.5 + eps)
+        setattr(self, rho_name, rho)
+
+    def _update_scales_from_logits(self):
+        config = self.config
+        self._lambda = self._logit_to_scale(self._rho_lambda, config.lambda_min, config.lambda_max)
+        self._eta = self._logit_to_scale(self._rho_eta, config.eta_min, config.eta_max)
+
+    def adaptive_diagnostic(self, seed):
+        config = self.config
+        lambda_plus = self.lambda_
+        eta_plus = self.eta
+        lambda_minus = max(config.lambda_min, config.contraction_lambda * lambda_plus)
+        eta_minus = max(config.eta_min, config.contraction_eta * eta_plus)
+        effective_c_lambda = max(lambda_minus / lambda_plus, 1e-12)
+        effective_c_eta = max(eta_minus / eta_plus, 1e-12)
+
+        g_pp = []
+        g_mp = []
+        g_pm = []
+        g_mm = []
+        for replication in range(config.adaptive_replications):
+            base_seed = seed + replication * 100_000
+            law_generator = torch.Generator(device=self.env.device)
+            law_generator.manual_seed(base_seed + 30_000)
+            initial_distribution = self.sample_initial_distribution(law_generator)
+            laws, _ = self.mean_field_law_flow(seed=base_seed + 20_000, initial_distribution=initial_distribution)
+
+            sensitivities_plus = self.estimate_state_sensitivities(
+                laws,
+                base_seed + 10_000,
+                initial_distribution=initial_distribution,
+                eta=eta_plus,
+            )
+            sensitivities_minus = self.estimate_state_sensitivities(
+                laws,
+                base_seed + 40_000,
+                initial_distribution=initial_distribution,
+                eta=eta_minus,
+            )
+            components_plus = self.batched_trajectory_components(
+                laws,
+                base_seed,
+                initial_distribution=initial_distribution,
+                lambda_=lambda_plus,
+            )
+            components_minus = self.batched_trajectory_components(
+                laws,
+                base_seed + 50_000,
+                initial_distribution=initial_distribution,
+                lambda_=lambda_minus,
+            )
+
+            action_gradient, weights, law_scores, _ = components_plus
+            g_pp.append(
+                self.combine_batched_trajectory_components(
+                    action_gradient,
+                    weights,
+                    law_scores,
+                    sensitivities_plus,
+                    lambda_=lambda_plus,
+                ).detach()
+            )
+            g_pm.append(
+                self.combine_batched_trajectory_components(
+                    action_gradient,
+                    weights,
+                    law_scores,
+                    sensitivities_minus,
+                    lambda_=lambda_plus,
+                ).detach()
+            )
+
+            action_gradient, weights, law_scores, _ = components_minus
+            g_mp.append(
+                self.combine_batched_trajectory_components(
+                    action_gradient,
+                    weights,
+                    law_scores,
+                    sensitivities_plus,
+                    lambda_=lambda_minus,
+                ).detach()
+            )
+            g_mm.append(
+                self.combine_batched_trajectory_components(
+                    action_gradient,
+                    weights,
+                    law_scores,
+                    sensitivities_minus,
+                    lambda_=lambda_minus,
+                ).detach()
+            )
+
+        g_pp = torch.stack(g_pp)
+        g_mp = torch.stack(g_mp)
+        g_pm = torch.stack(g_pm)
+        g_mm = torch.stack(g_mm)
+
+        delta_lambda = 0.5 * ((g_pp - g_mp) + (g_pm - g_mm))
+        delta_eta = 0.5 * ((g_pp - g_pm) + (g_mp - g_mm))
+        mean_delta_lambda = delta_lambda.mean(dim=0)
+        mean_delta_eta = delta_eta.mean(dim=0)
+
+        discrepancy_lambda = (
+            mean_delta_lambda.norm().square() - self._covariance_trace(delta_lambda) / config.adaptive_replications
+        ).clamp_min(0.0)
+        discrepancy_eta = (
+            mean_delta_eta.norm().square() - self._covariance_trace(delta_eta) / config.adaptive_replications
+        ).clamp_min(0.0)
+        bias_lambda = discrepancy_lambda / (1.0 - effective_c_lambda**config.bias_order_lambda) ** 2
+        bias_eta = discrepancy_eta / (1.0 - effective_c_eta**config.bias_order_eta) ** 2
+        variance = self._covariance_trace(g_pp)
+
+        z_lambda = float(torch.log((bias_lambda + config.diagnostic_delta) / (config.target_bias_lambda * variance + config.diagnostic_delta)).detach().cpu())
+        z_eta = float(torch.log((bias_eta + config.diagnostic_delta) / (config.target_bias_eta * variance + config.diagnostic_delta)).detach().cpu())
+
+        mean_pp = g_pp.mean(dim=0)
+        mean_mp = g_mp.mean(dim=0)
+        mean_pm = g_pm.mean(dim=0)
+        mean_mm = g_mm.mean(dim=0)
+        lambda_high = 0.5 * (mean_pp + mean_pm)
+        lambda_low = 0.5 * (mean_mp + mean_mm)
+        eta_high = 0.5 * (mean_pp + mean_mp)
+        eta_low = 0.5 * (mean_pm + mean_mm)
+        lambda_cosine = self._cosine(lambda_high, lambda_low)
+        eta_cosine = self._cosine(eta_high, eta_low)
+
+        if (
+            lambda_high.norm().item() > config.direction_norm_min
+            and lambda_low.norm().item() > config.direction_norm_min
+            and math.isfinite(lambda_cosine)
+            and lambda_cosine < config.direction_cosine_min
+        ):
+            z_lambda = max(z_lambda, config.direction_z)
+        if (
+            eta_high.norm().item() > config.direction_norm_min
+            and eta_low.norm().item() > config.direction_norm_min
+            and math.isfinite(eta_cosine)
+            and eta_cosine < config.direction_cosine_min
+        ):
+            z_eta = max(z_eta, config.direction_z)
+
+        self._controller_steps += 1
+        self._controller_update("lambda", z_lambda)
+        self._controller_update("eta", z_eta)
+        self._update_scales_from_logits()
+
+        return {
+            "adaptive_lambda_before": lambda_plus,
+            "adaptive_eta_before": eta_plus,
+            "adaptive_lambda_after": self.lambda_,
+            "adaptive_eta_after": self.eta,
+            "adaptive_lambda_contracted": lambda_minus,
+            "adaptive_eta_contracted": eta_minus,
+            "adaptive_z_lambda": z_lambda,
+            "adaptive_z_eta": z_eta,
+            "adaptive_bias_lambda": float(bias_lambda.detach().cpu()),
+            "adaptive_bias_eta": float(bias_eta.detach().cpu()),
+            "adaptive_variance": float(variance.detach().cpu()),
+            "adaptive_lambda_cosine": lambda_cosine,
+            "adaptive_eta_cosine": eta_cosine,
+        }
+
+    def train(self):
+        setup_started_at = synchronized_time(self.env.device)
+        optimizer = self.optimizer()
+        setup_seconds = synchronized_time(self.env.device) - setup_started_at
+        history = {
+            "objective": [],
+            "validation_objective": [],
+            "gradient_norm": [],
+            "lambda": [],
+            "eta": [],
+            "adaptive_step": [],
+            "adaptive_lambda_before": [],
+            "adaptive_eta_before": [],
+            "adaptive_lambda_after": [],
+            "adaptive_eta_after": [],
+            "adaptive_lambda_contracted": [],
+            "adaptive_eta_contracted": [],
+            "adaptive_z_lambda": [],
+            "adaptive_z_eta": [],
+            "adaptive_bias_lambda": [],
+            "adaptive_bias_eta": [],
+            "adaptive_variance": [],
+            "adaptive_lambda_cosine": [],
+            "adaptive_eta_cosine": [],
+            "train_step_seconds": [],
+            "validation_seconds": [],
+            "setup_seconds": [setup_seconds],
+        }
+
+        for episode in range(self.n_train):
+            step_started_at = synchronized_time(self.env.device)
+            gradient, objective = self.estimate_gradient(self.config.seed + episode * (self.n_particles + 1))
+
+            optimizer.zero_grad()
+            self.set_flat_gradient(-gradient)
+            optimizer.step()
+            objective_value = float(objective.detach().cpu())
+            gradient_norm_value = float(gradient.norm().detach().cpu())
+
+            checkpoint_interval = self.config.adaptive_checkpoint_interval
+            if checkpoint_interval and (episode + 1) % checkpoint_interval == 0:
+                diagnostic = self.adaptive_diagnostic(self.config.seed + 1_000_000 + episode * 10_000)
+                history["adaptive_step"].append(episode + 1)
+                for key, value in diagnostic.items():
+                    history[key].append(value)
+
+            history["train_step_seconds"].append(synchronized_time(self.env.device) - step_started_at)
+            history["objective"].append(objective_value)
+            history["gradient_norm"].append(gradient_norm_value)
+            history["lambda"].append(self.lambda_)
+            history["eta"].append(self.eta)
+
+            if self.validation_interval and (episode + 1) % self.validation_interval == 0:
+                validation_started_at = synchronized_time(self.env.device)
+                with torch.no_grad():
+                    validation = self.evaluate(seed=self.config.seed + self.n_train)
+                validation_value = float(validation.detach().cpu())
+                history["validation_seconds"].append(synchronized_time(self.env.device) - validation_started_at)
+                history["validation_objective"].append(validation_value)
+
+        return self.policy, history
+
+
 def train_discrete_transport(env, policy=None, config=DiscreteTransportConfig()):
     return DiscreteTransport(env, policy=policy, config=config).train()
+
+
+def train_adaptive_discrete_transport(env, policy=None, config=AdaptiveDiscreteTransportConfig()):
+    return AdaptiveDiscreteTransport(env, policy=policy, config=config).train()
 
 
 @dataclass(frozen=True)
