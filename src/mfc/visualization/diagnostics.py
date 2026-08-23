@@ -210,27 +210,17 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
             moments = estimator.mean_field_moment_flow(seed=base_seed + 20_000)
             sensitivities = estimator.estimate_moment_sensitivities(moments, base_seed + 10_000)
             zeros = [torch.zeros_like(sensitivity) for sensitivity in sensitivities]
-            full_gradient = torch.zeros(estimator.n_parameters, dtype=env.dtype, device=env.device)
-            policy_gradient = torch.zeros_like(full_gradient)
-            for particle in range(particle_count):
-                full_score, full_returns, _ = estimator.trajectory_gradient(moments, sensitivities, base_seed + particle)
-                policy_score, policy_returns, _ = estimator.trajectory_gradient(moments, zeros, base_seed + particle)
-                full_gradient = full_gradient + (full_score * full_returns.detach().unsqueeze(-1)).sum(dim=0)
-                policy_gradient = policy_gradient + (policy_score * policy_returns.detach().unsqueeze(-1)).sum(dim=0)
+            full_gradient, _ = estimator.batched_trajectory_gradient(moments, sensitivities, base_seed)
+            policy_gradient, _ = estimator.batched_trajectory_gradient(moments, zeros, base_seed)
         else:
             laws, _ = estimator.mean_field_law_flow(seed=base_seed + 20_000)
             sensitivities = estimator.estimate_state_sensitivities(laws, base_seed + 10_000)
             zeros = [torch.zeros_like(sensitivity) for sensitivity in sensitivities]
-            full_gradient = torch.zeros(estimator.n_parameters, dtype=env.dtype, device=env.device)
-            policy_gradient = torch.zeros_like(full_gradient)
-            for particle in range(particle_count):
-                full_score, full_return, _ = estimator.trajectory_gradient(laws, sensitivities, base_seed + particle)
-                policy_score, policy_return, _ = estimator.trajectory_gradient(laws, zeros, base_seed + particle)
-                full_gradient = full_gradient + full_score * full_return.detach()
-                policy_gradient = policy_gradient + policy_score * policy_return.detach()
+            full_gradient, _ = estimator.batched_trajectory_gradient(laws, sensitivities, base_seed)
+            policy_gradient, _ = estimator.batched_trajectory_gradient(laws, zeros, base_seed)
 
-        full_gradient = (full_gradient / particle_count).detach().cpu()
-        policy_gradient = (policy_gradient / particle_count).detach().cpu()
+        full_gradient = full_gradient.detach().cpu()
+        policy_gradient = policy_gradient.detach().cpu()
         correction = full_gradient - policy_gradient
         full_gradients.append(full_gradient)
         policy_gradients.append(policy_gradient)

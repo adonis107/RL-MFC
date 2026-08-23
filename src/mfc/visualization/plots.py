@@ -7,6 +7,18 @@ from .flows import final_policy_probabilities, learned_flow
 from .io import load_env_and_policy, validation_dataframe
 
 
+STATE_FLOW_BENCHMARKS = {
+    "cybersecurity": {"UI": 0.43, "US": 0.57},
+    "twostate": {"0": 0.6, "1": 0.4},
+}
+
+
+def state_flow_plot_horizon(metadata):
+    if metadata["env"] == "cybersecurity":
+        return min(10, metadata["env_config"].get("T_val", metadata["horizon"]))
+    return metadata["horizon"]
+
+
 def use_symlog_validation_axis(ax, values, threshold_ratio=1_000.0):
     finite = pd.Series(values, dtype="float64").dropna()
     finite = finite[(finite != float("inf")) & (finite != float("-inf"))]
@@ -62,7 +74,10 @@ def plot_validation_rewards(runs, env=None, horizon=None, flow=None, ax=None, sa
         ax.fill_between(x, mean - std, mean + std, alpha=0.18)
 
     ax.set_xlabel("training step")
-    ax.set_ylabel("validation reward")
+    if env == "lq":
+        ax.set_ylabel("validation reward (-cost, higher is better)")
+    else:
+        ax.set_ylabel("validation reward (higher is better)")
     if env == "lq":
         use_symlog_validation_axis(ax, df["validation_reward"])
     ax.legend(frameon=False)
@@ -104,7 +119,7 @@ def plot_distribution_comparison(run, ax=None, save_path=None):
 
 def plot_state_flow(run, ax=None, save_path=None):
     metadata = run["metadata"]
-    flow = learned_flow(run)
+    flow = learned_flow(run, horizon=state_flow_plot_horizon(metadata))
 
     if metadata["env"] in {"lq", "portfolio"}:
         if ax is None:
@@ -128,6 +143,9 @@ def plot_state_flow(run, ax=None, save_path=None):
         _, ax = plt.subplots(figsize=(8, 4.5))
     for label in labels:
         ax.plot(df["time"], df[label], label=label)
+    for label, value in STATE_FLOW_BENCHMARKS.get(metadata["env"], {}).items():
+        if label in labels:
+            ax.axhline(value, linestyle="--", linewidth=1.2, alpha=0.75, label=f"{label} benchmark")
     ax.set_xlabel("time")
     ax.set_ylabel("state probability")
     ax.legend(frameon=False)

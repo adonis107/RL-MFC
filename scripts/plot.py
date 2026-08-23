@@ -15,6 +15,7 @@ from mfc.visualization import (
     discrete_transport_tv_bound_table,
     gradient_diagnostics,
     best_runs_by_label,
+    flow_dataframe,
     load_runs,
     objective_table,
     plot_advertising_diagnostics,
@@ -78,6 +79,24 @@ def make_standard_outputs(
         save_table(twostate_policy_error_table(runs), output_dir / "policy_error.csv")
     if env == "advertising":
         save_table(advertising_policy_error_table(runs), output_dir / "policy_error.csv")
+
+    if env in {"lq", "portfolio"}:
+        rows = []
+        for run in best_runs_by_label(runs):
+            metadata = run["metadata"]
+            table = flow_dataframe(run)
+            table.insert(0, "seed", metadata["seed"])
+            table.insert(0, "flow", metadata["flow"])
+            table.insert(0, "horizon", metadata["horizon"])
+            table.insert(0, "perturbation", metadata["perturbation"])
+            table.insert(0, "label", (
+                f"{metadata['algorithm']}_"
+                f"{metadata['perturbation'] if metadata['perturbation'] is not None else 'none'}_"
+                f"{metadata['flow']}"
+            ))
+            rows.append(table)
+        if rows:
+            save_table(pd.concat(rows, ignore_index=True), output_dir / "moment_flows.csv")
 
     for run in best_runs_by_label(runs):
         metadata = run["metadata"]
