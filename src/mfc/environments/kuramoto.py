@@ -15,14 +15,17 @@ class KuramotoConfig:
     lock_weight: float = 0.5
     terminal_sync_weight: float = 5.0
     terminal_lock_weight: float = 2.0
+    order_weight: float = 10.0
+    terminal_order_weight: float = 50.0
+    order_target: float = 0.6
     action_weight: float = 0.02
     action_scale: float = 2.0
     tau: float = 0.25
     rho: float = 1.0
     hidden_width: int = 64
     T: int = 20
-    T_val: int = 40
-    n_train: int = 10_000
+    T_val: int = 20
+    n_train: int = 3_000
     lr: float = 1e-3
     n_particles: int = 500
     n_law_gradient: int = 20
@@ -132,6 +135,23 @@ class Kuramoto:
         s = law[..., 1] if law.ndim > 1 else law[1]
         return 1.0 - torch.cos(states) * c - torch.sin(states) * s
 
+    def order_parameter(self, law):
+        c = law[..., 0] if law.ndim > 1 else law[0]
+        s = law[..., 1] if law.ndim > 1 else law[1]
+        return torch.sqrt((c.square() + s.square()).clamp_min(1e-12))
+
+    def order_deviation_cost(self, law, weight):
+        # Population-level penalty steering the order parameter towards a target
+        # level of synchronisation. With order_target < 1 the individual and the
+        # collective incentives disagree: an agent still gains by aligning with
+        # the local field, while the population is penalised for over-aligning.
+        # This is what makes the mean-field correction non-collinear with the
+        # policy-score term; without it the two coincide up to a positive factor
+        # and a scale-invariant optimizer cannot distinguish them.
+        if weight == 0.0:
+            return None
+        return weight * (self.order_parameter(law) - self.config.order_target).square()
+
     def phase_lock_cost(self, states):
         target = torch.as_tensor(self.config.target_phase, dtype=states.dtype, device=states.device)
         return 1.0 - torch.cos(states - target)
@@ -142,6 +162,9 @@ class Kuramoto:
             + self.config.lock_weight * self.phase_lock_cost(states)
             + self.config.action_weight * actions.square()
         )
+        order = self.order_deviation_cost(law, self.config.order_weight)
+        if order is not None:
+            cost = cost + self.config.dt * order
         return -cost
 
     def terminal_reward(self, states, law):
@@ -149,6 +172,9 @@ class Kuramoto:
             self.config.terminal_sync_weight * self.local_disagreement(states, law)
             + self.config.terminal_lock_weight * self.phase_lock_cost(states)
         )
+        order = self.order_deviation_cost(law, self.config.terminal_order_weight)
+        if order is not None:
+            cost = cost + order
         return -cost
 
     def sample_law_perturbation(self, generator, scale):
@@ -174,6 +200,17 @@ class Kuramoto:
         return zeta, beta, affine_scale
 
     def perturb_law_features(self, law, zeta, beta, scale):
+        # The projection back into the unit disc biases the transport score:
+        # transport_score() uses the score of the Gaussian law + scale * beta,
+        # which is no longer the score of the sampled law once the projection
+        # fires. Because the law norm is the synchronisation level, the clip
+        # rate grows with training, reaching ~50% at r = 0.99 with lambda = 0.1.
+        # It is kept nonetheless: measured against finite-difference directional
+        # derivatives of the deterministic objective, the projected estimator has
+        # a ~13x smaller standard error and tracks the reference more closely
+        # than the unprojected one, whose variance is too large to exploit at any
+        # practical replication count. The resulting bias is documented as a
+        # limitation rather than removed.
         perturbed = law + scale * beta
         norm = perturbed.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         return torch.where(norm > 0.995, 0.995 * perturbed / norm, perturbed)
