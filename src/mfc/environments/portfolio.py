@@ -11,6 +11,7 @@ class PortfolioConfig:
     excess_return_mean: float = 0.02
     excess_return_volatility: float = 0.08
     chi: float = 10.0
+    mean_field_penalty: float = 2.0
     tau: float = 0.02
     rho: float = 1.0
     perturbation_scale: float = 0.0
@@ -87,7 +88,10 @@ class Portfolio:
         return self.s[t] * states + returns * actions
 
     def reward(self, states, mu, actions):
-        return torch.zeros_like(states, dtype=self.dtype)
+        gamma = self.config.mean_field_penalty
+        if gamma == 0.0:
+            return torch.zeros_like(states, dtype=self.dtype)
+        return torch.zeros_like(states, dtype=self.dtype) - gamma * mu.square()
 
     def terminal_reward(self, states, mu):
         return states - self.config.chi * (states - mu).square()
@@ -112,9 +116,15 @@ class Portfolio:
     def objective(self, theta, lambda_=None):
         lambda_ = self.config.perturbation_scale if lambda_ is None else lambda_
         mu, Sigma = self.moment_flow(theta, lambda_)
-        return mu[-1] - self.config.chi * (
+        value = mu[-1] - self.config.chi * (
             Sigma[-1] + lambda_**2 * self.config.rho**2 * (mu[-1].square() + 1.0)
         )
+        gamma = self.config.mean_field_penalty
+        if gamma != 0.0:
+            perturbation = lambda_**2 * self.config.rho**2
+            running = mu[: self.config.T].square() * (1.0 + perturbation) + perturbation
+            value = value - gamma * running.sum()
+        return value
 
     def exact_gradient(self, theta, lambda_=None):
         lambda_ = self.config.perturbation_scale if lambda_ is None else lambda_
@@ -129,7 +139,9 @@ class Portfolio:
             k = theta[t, 0]
             p[t] = self.s[t] * p[t + 1] + (
                 2.0 * self.h[t] * k.square() * lambda_**2 * self.config.rho**2 * mu[t] * adj_var[t + 1]
-            )
+            ) - 2.0 * self.config.mean_field_penalty * (
+                1.0 + lambda_**2 * self.config.rho**2
+            ) * mu[t]
             adj_var[t] = (
                 self.s[t].square() + 2.0 * self.s[t] * self.rbar[t] * k + self.h[t] * k.square()
             ) * adj_var[t + 1]
@@ -158,6 +170,20 @@ class Portfolio:
             theta[t, 1] = self.rbar[t] * product / (2.0 * self.config.chi * self.sigma_R[t].square())
             product = product / (self.s[t] * (1.0 - B[t]))
 
+        if self.config.mean_field_penalty == 0.0:
+            return theta
+
+        # The running mean-field penalty leaves the optimal k_t unchanged, since k_t
+        # enters only through the variance recursion. The objective stays quadratic and
+        # concave in ell, so grad_ell J is affine and the optimum solves a linear system.
+        theta[:, 1] = 0.0
+        base = self.exact_gradient(theta, lambda_=0.0)[:, 1]
+        hessian = torch.empty(self.config.T, self.config.T, dtype=self.dtype, device=self.device)
+        for t in range(self.config.T):
+            probe = theta.clone()
+            probe[t, 1] = 1.0
+            hessian[:, t] = self.exact_gradient(probe, lambda_=0.0)[:, 1] - base
+        theta[:, 1] = torch.linalg.solve(hessian, -base)
         return theta
 
     def optimal_policy(self):
