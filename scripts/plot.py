@@ -91,7 +91,7 @@ def make_standard_outputs(
     if env == "advertising":
         save_table(advertising_policy_error_table(runs), output_dir / "policy_error.csv")
 
-    if env in {"lq", "portfolio"}:
+    if env in {"lq", "portfolio", "kuramoto"}:
         rows = []
         for run in best_runs_by_label(runs):
             metadata = run["metadata"]
@@ -165,7 +165,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Create standard plots and tables from saved MFC runs.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio", "all"],
         required=True,
     )
     parser.add_argument("--results-root", default="results")
@@ -179,7 +179,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio"]
     selected_envs = envs if args.env == "all" else [args.env]
     for env in selected_envs:
         make_standard_outputs(

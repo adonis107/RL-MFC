@@ -99,6 +99,8 @@ class Reinforce:
         return torch.multinomial(probabilities, n_particles, replacement=True, generator=generator)
 
     def empirical_law(self, states):
+        if hasattr(self.env, "empirical_law"):
+            return self.env.empirical_law(states)
         if states.dtype.is_floating_point:
             return states.mean().detach()
 

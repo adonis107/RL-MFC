@@ -36,6 +36,19 @@ def continuous_moment_flow(env, policy, horizon):
         with torch.no_grad():
             means, variances = env.moment_flow(policy, lambda_=0.0)
         return torch.stack([means[: horizon + 1], variances[: horizon + 1]], dim=-1).detach()
+    if hasattr(env, "empirical_law"):
+        generator = torch.Generator(device=env.device)
+        generator.manual_seed(getattr(env.config, "validation_seed", 0))
+        n_particles = getattr(env.config, "n_flow_particles", getattr(env.config, "validation_particles", 1024))
+        states = env.sample_initial(n_particles, generator)
+        laws = [env.empirical_law(states)]
+        with torch.no_grad():
+            for t in range(horizon):
+                law = laws[-1]
+                actions = env.sample_action(policy, t, states, law, generator)
+                states = env.sample(states, law, actions, generator, t=t)
+                laws.append(env.empirical_law(states))
+        return torch.stack(laws).detach()
     raise ValueError("Continuous moment flow is only available for environments exposing moment_flow.")
 
 
@@ -68,6 +81,16 @@ def flow_dataframe(run):
                 "time": range(flow.shape[0]),
                 "mean": flow[:, 0].numpy(),
                 "variance": flow[:, 1].numpy(),
+            }
+        )
+    if metadata["env"] == "kuramoto":
+        order = torch.linalg.norm(flow, dim=-1)
+        return pd.DataFrame(
+            {
+                "time": range(flow.shape[0]),
+                "cos_moment": flow[:, 0].numpy(),
+                "sin_moment": flow[:, 1].numpy(),
+                "order_parameter": order.numpy(),
             }
         )
 

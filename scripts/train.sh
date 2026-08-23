@@ -13,7 +13,7 @@ GPU_ENVS="${GPU_ENVS:-}"
 GPU_DEVICE="${GPU_DEVICE:-cuda}"
 GPU_WORKERS="${GPU_WORKERS:-1}"
 
-CPU_ENVS="${CPU_ENVS:-twostate cybersecurity distribution advertising lq portfolio}"
+CPU_ENVS="${CPU_ENVS:-twostate cybersecurity distribution advertising lq kuramoto portfolio}"
 CPU_DEVICE="${CPU_DEVICE:-cpu}"
 CPU_WORKERS="${CPU_WORKERS:-16}"
 

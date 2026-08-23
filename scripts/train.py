@@ -9,6 +9,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 
 from mfc.algorithms import (
+    AdaptiveContinuousTransport,
+    AdaptiveContinuousTransportConfig,
     AdaptiveDiscreteTransport,
     AdaptiveDiscreteTransportConfig,
     ContinuousTransport,
@@ -27,6 +29,8 @@ from mfc.environments import (
     CybersecurityConfig,
     Distribution,
     DistributionConfig,
+    Kuramoto,
+    KuramotoConfig,
     LQ,
     LQConfig,
     Portfolio,
@@ -42,11 +46,12 @@ ENVIRONMENTS = {
     "distribution": (Distribution, DistributionConfig),
     "advertising": (Advertising, AdvertisingConfig),
     "lq": (LQ, LQConfig),
+    "kuramoto": (Kuramoto, KuramotoConfig),
     "portfolio": (Portfolio, PortfolioConfig),
 }
 
 DISCRETE_ENVS = {"twostate", "cybersecurity", "distribution", "advertising"}
-CONTINUOUS_ENVS = {"lq", "portfolio"}
+CONTINUOUS_ENVS = {"lq", "portfolio", "kuramoto"}
 
 
 def maybe_float(value):
@@ -131,29 +136,50 @@ def build_algorithm(args, env):
         return MFReinforce(env, config=config)
 
     if args.algorithm == "adaptive_transport":
-        if args.env not in DISCRETE_ENVS:
-            raise ValueError("Adaptive discrete transport is only configured for discrete-state environments.")
         if args.perturbation is None:
-            raise ValueError("Adaptive discrete transport requires --perturbation initial lambda.")
+            raise ValueError("Adaptive transport requires --perturbation initial lambda.")
         eta = 0.8 if args.eta is None else args.eta
-        config = AdaptiveDiscreteTransportConfig(
-            **common,
-            lambda_=args.perturbation,
-            eta=eta,
-            flow=args.flow,
-            n_flow_particles=args.n_flow_particles,
-            n_logit_gradient=args.n_logit_gradient,
-            simplex_sigma=args.simplex_sigma,
-            baseline=use_baseline,
-            reuse_state_gradient=not args.no_reuse_state_gradient,
-            adaptive_checkpoint_interval=args.adaptive_checkpoint_interval
-            if args.adaptive_checkpoint_interval is not None
-            else AdaptiveDiscreteTransportConfig.adaptive_checkpoint_interval,
-            adaptive_replications=args.adaptive_replications
-            if args.adaptive_replications is not None
-            else AdaptiveDiscreteTransportConfig.adaptive_replications,
-        )
-        return AdaptiveDiscreteTransport(env, config=config)
+
+        if args.env in DISCRETE_ENVS:
+            config = AdaptiveDiscreteTransportConfig(
+                **common,
+                lambda_=args.perturbation,
+                eta=eta,
+                flow=args.flow,
+                n_flow_particles=args.n_flow_particles,
+                n_logit_gradient=args.n_logit_gradient,
+                simplex_sigma=args.simplex_sigma,
+                baseline=use_baseline,
+                reuse_state_gradient=not args.no_reuse_state_gradient,
+                adaptive_checkpoint_interval=args.adaptive_checkpoint_interval
+                if args.adaptive_checkpoint_interval is not None
+                else AdaptiveDiscreteTransportConfig.adaptive_checkpoint_interval,
+                adaptive_replications=args.adaptive_replications
+                if args.adaptive_replications is not None
+                else AdaptiveDiscreteTransportConfig.adaptive_replications,
+            )
+            return AdaptiveDiscreteTransport(env, config=config)
+
+        if args.env in CONTINUOUS_ENVS:
+            config = AdaptiveContinuousTransportConfig(
+                **common,
+                lambda_=args.perturbation,
+                eta=eta,
+                flow=args.flow,
+                n_flow_particles=args.n_flow_particles,
+                n_law_gradient=args.n_law_gradient,
+                n_law_particles=args.n_law_particles,
+                law_chart=args.law_chart,
+                baseline=use_baseline,
+                reuse_state_gradient=not args.no_reuse_state_gradient,
+                adaptive_checkpoint_interval=args.adaptive_checkpoint_interval
+                if args.adaptive_checkpoint_interval is not None
+                else AdaptiveContinuousTransportConfig.adaptive_checkpoint_interval,
+                adaptive_replications=args.adaptive_replications
+                if args.adaptive_replications is not None
+                else AdaptiveContinuousTransportConfig.adaptive_replications,
+            )
+            return AdaptiveContinuousTransport(env, config=config)
 
     if args.algorithm == "transport":
         if args.perturbation is None:
@@ -232,6 +258,14 @@ def simulator_budget_estimate(algorithm):
         gradient_samples = algorithm.n_logit_gradient
         gradient_reuses = 1 if algorithm.config.reuse_state_gradient else particles
         return horizon * particles + horizon * gradient_samples * gradient_reuses + flow_extra
+
+    if isinstance(algorithm, AdaptiveContinuousTransport):
+        gradient_samples = algorithm.n_law_gradient
+        gradient_reuses = 1 if algorithm.config.reuse_state_gradient else particles
+        base_cost = horizon * particles + horizon * gradient_samples * gradient_reuses
+        interval = algorithm.config.adaptive_checkpoint_interval
+        overhead = 0.0 if not interval else 2.0 * algorithm.config.adaptive_replications / interval
+        return base_cost * (1.0 + overhead) + flow_extra
 
     if isinstance(algorithm, ContinuousTransport):
         gradient_samples = algorithm.n_law_gradient

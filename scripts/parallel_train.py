@@ -16,7 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run the MFC training grid with parallel workers.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio", "all"],
         required=True,
     )
     parser.add_argument("--seeds", type=run_plan.parse_seed_list, default=[0, 1, 2, 3, 4])
@@ -90,7 +90,7 @@ def log_path_for(output_dir, results_root, logs_root):
 
 
 def build_records(args):
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio"]
     selected_envs = envs if args.env == "all" else [args.env]
     results_root = Path(args.results_root)
     logs_root = args.logs_root or results_root / "logs"

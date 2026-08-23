@@ -16,6 +16,7 @@ DISCRETE_REFERENCE = {
 
 CONTINUOUS_REFERENCE = {
     "lq": {"n_particles": 200, "n_gradient": 1},
+    "kuramoto": {"n_particles": 500, "n_gradient": 20},
     "portfolio": {"n_particles": 500, "n_gradient": 1},
 }
 
@@ -30,6 +31,7 @@ ADAPTIVE_REPLICATIONS = 4
 # where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
 TRANSPORT_AUXILIARY_GRADIENTS = {
     "cybersecurity": 20,
+    "kuramoto": 50,
     "lq": 20,
     "portfolio": 200,
 }
@@ -105,6 +107,16 @@ def experiment_plan(env):
                 job(env, "transport", 20, flow=flow, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
                 for lambda_ in TRANSPORT_LAMBDAS
             )
+            jobs.append(
+                job(
+                    env,
+                    "adaptive_transport",
+                    20,
+                    flow=flow,
+                    perturbation=ADAPTIVE_INITIAL_LAMBDA,
+                    eta=ADAPTIVE_INITIAL_ETA,
+                )
+            )
         return jobs
 
     if env == "portfolio":
@@ -112,6 +124,25 @@ def experiment_plan(env):
         jobs.extend(
             job(env, "transport", 10, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
             for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4)
+        )
+        jobs.append(job(env, "adaptive_transport", 10, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
+        return jobs
+
+    if env == "kuramoto":
+        jobs = [job(env, "reinforce", 20, flow="particle")]
+        jobs.extend(
+            job(env, "transport", 20, flow="particle", perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
+            for lambda_ in (0.1, 0.2, 0.4)
+        )
+        jobs.append(
+            job(
+                env,
+                "adaptive_transport",
+                20,
+                flow="particle",
+                perturbation=ADAPTIVE_INITIAL_LAMBDA,
+                eta=ADAPTIVE_INITIAL_ETA,
+            )
         )
         return jobs
 
@@ -261,7 +292,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Launch the training grid for one environment.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio", "all"],
         required=True,
     )
     parser.add_argument("--seeds", type=parse_seed_list, default=[0, 1, 2, 3, 4])
@@ -293,7 +324,7 @@ def main():
     if args.baseline and args.no_baseline:
         raise ValueError("Use at most one of --baseline and --no-baseline.")
 
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio"]
     selected_envs = envs if args.env == "all" else [args.env]
 
     commands = []

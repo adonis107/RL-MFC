@@ -73,7 +73,7 @@ def run_label(metadata):
         return f"MF-REINFORCE eps={metadata['perturbation']:g}"
     if algorithm == "adaptive_transport":
         initial_eta = metadata.get("algorithm_config", {}).get("eta", metadata.get("eta"))
-        return f"Adaptive discrete transport lambda0={metadata['perturbation']:g}, eta0={initial_eta:g}"
+        return f"Adaptive transport lambda0={metadata['perturbation']:g}, eta0={initial_eta:g}"
     label = f"Transport lambda={metadata['perturbation']:g}"
     eta = metadata.get("eta")
     if eta is not None:

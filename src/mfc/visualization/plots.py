@@ -135,6 +135,29 @@ def plot_state_flow(run, ax=None, save_path=None):
             ax.figure.savefig(save_path, bbox_inches="tight", dpi=180)
         return ax, pd.DataFrame({"time": list(steps), "mean": flow[:, 0].numpy(), "variance": flow[:, 1].numpy()})
 
+    if metadata["env"] == "kuramoto":
+        if ax is None:
+            _, ax = plt.subplots(figsize=(8, 4.5))
+        steps = range(flow.shape[0])
+        order = torch.linalg.norm(flow, dim=-1)
+        ax.plot(steps, flow[:, 0], label="C")
+        ax.plot(steps, flow[:, 1], label="S")
+        ax.plot(steps, order, label="R")
+        ax.set_xlabel("time")
+        ax.set_ylabel("Fourier moment")
+        ax.legend(frameon=False)
+        ax.grid(alpha=0.25)
+        if save_path is not None:
+            ax.figure.savefig(save_path, bbox_inches="tight", dpi=180)
+        return ax, pd.DataFrame(
+            {
+                "time": list(steps),
+                "cos_moment": flow[:, 0].numpy(),
+                "sin_moment": flow[:, 1].numpy(),
+                "order_parameter": order.numpy(),
+            }
+        )
+
     labels = STATE_LABELS.get(metadata["env"], [str(i) for i in range(flow.shape[1])])
     df = pd.DataFrame(flow.numpy(), columns=labels)
     df["time"] = range(len(df))
