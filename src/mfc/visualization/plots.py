@@ -45,7 +45,15 @@ def use_symlog_validation_axis(ax, values, threshold_ratio=1_000.0):
     return True
 
 
-def plot_validation_rewards(runs, env=None, horizon=None, flow=None, ax=None, save_path=None):
+def plot_validation_rewards(
+    runs,
+    env=None,
+    horizon=None,
+    flow=None,
+    ax=None,
+    save_path=None,
+    show_flow_label=None,
+):
     df = validation_dataframe(runs)
     if env is not None:
         df = df[df["env"] == env]
@@ -58,7 +66,9 @@ def plot_validation_rewards(runs, env=None, horizon=None, flow=None, ax=None, sa
 
     df = df.copy()
     label_parts = [df["label"]]
-    if flow is None and df["flow"].nunique(dropna=False) > 1:
+    if show_flow_label is None:
+        show_flow_label = flow is None and df["flow"].nunique(dropna=False) > 1
+    if show_flow_label:
         label_parts.append(df["flow"].map(lambda value: f"flow={value}"))
     if horizon is None and df["horizon"].nunique(dropna=False) > 1:
         label_parts.append(df["horizon"].map(lambda value: f"T={value}"))

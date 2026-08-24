@@ -47,6 +47,137 @@ def perturbation_stem(metadata):
     return f"{perturbation}_eta_{eta}"
 
 
+def value_stem(value):
+    if value is None:
+        return "none"
+    if isinstance(value, float):
+        return f"{value:g}".replace("-", "m").replace(".", "p")
+    return str(value).replace("-", "m").replace(".", "p")
+
+
+def sort_key(value):
+    if value is None:
+        return float("-inf")
+    return value
+
+
+def run_score(run):
+    summary = run.get("summary", {})
+    value = summary.get("last_validation_objective")
+    if value is None:
+        value = summary.get("last_objective")
+    return float("-inf") if value is None else value
+
+
+def best_transport_eta_runs(transport_runs):
+    """Keep the eta with the best mean final validation for each lambda/flow."""
+    selected = []
+    group_keys = sorted(
+        {
+            (run["metadata"].get("perturbation"), run["metadata"].get("flow"))
+            for run in transport_runs
+        },
+        key=lambda item: (sort_key(item[0]), str(item[1])),
+    )
+
+    for perturbation, flow in group_keys:
+        group_runs = [
+            run
+            for run in transport_runs
+            if run["metadata"].get("perturbation") == perturbation
+            and run["metadata"].get("flow") == flow
+        ]
+        eta_values = sorted({run["metadata"].get("eta") for run in group_runs}, key=sort_key)
+        if not eta_values:
+            continue
+
+        best_eta = max(
+            eta_values,
+            key=lambda eta: sum(
+                run_score(run)
+                for run in group_runs
+                if run["metadata"].get("eta") == eta
+            )
+            / max(1, sum(1 for run in group_runs if run["metadata"].get("eta") == eta)),
+        )
+        selected.extend(run for run in group_runs if run["metadata"].get("eta") == best_eta)
+
+    return selected
+
+
+def validation_overview_runs(horizon_runs, flow=None):
+    core_runs = []
+    transport_runs = []
+    for run in horizon_runs:
+        metadata = run["metadata"]
+        if flow is not None and metadata["algorithm"] != "reinforce" and metadata["flow"] != flow:
+            continue
+        if metadata["algorithm"] == "transport":
+            transport_runs.append(run)
+        else:
+            core_runs.append(run)
+    return core_runs + best_transport_eta_runs(transport_runs)
+
+
+def representative_plot_runs(runs):
+    core_runs = [run for run in runs if run["metadata"]["algorithm"] != "transport"]
+    transport_runs = [run for run in runs if run["metadata"]["algorithm"] == "transport"]
+    return best_runs_by_label(core_runs + best_transport_eta_runs(transport_runs))
+
+
+def save_validation_splits(horizon_runs, env, horizon, output_dir):
+    transport_runs = [run for run in horizon_runs if run["metadata"]["algorithm"] == "transport"]
+
+    if not transport_runs:
+        plot_validation_rewards(horizon_runs, env=env, horizon=horizon)
+        save_current(output_dir / f"validation_T_{horizon}.png")
+        return
+
+    transport_flows = sorted({run["metadata"]["flow"] for run in transport_runs})
+    default_flow = "exact" if "exact" in transport_flows else transport_flows[0]
+
+    for flow in transport_flows:
+        overview_runs = validation_overview_runs(horizon_runs, flow=flow)
+        if not overview_runs:
+            continue
+        plot_validation_rewards(overview_runs, env=env, horizon=horizon)
+        suffix = "" if flow == default_flow else f"_{flow}"
+        save_current(output_dir / f"validation_T_{horizon}{suffix}.png")
+
+    for flow in sorted({run["metadata"]["flow"] for run in transport_runs}):
+        flow_runs = [run for run in transport_runs if run["metadata"]["flow"] == flow]
+        for perturbation in sorted({run["metadata"].get("perturbation") for run in flow_runs}, key=sort_key):
+            split_runs = [run for run in flow_runs if run["metadata"].get("perturbation") == perturbation]
+            if not split_runs:
+                continue
+            plot_validation_rewards(split_runs, env=env, horizon=horizon)
+            save_current(
+                output_dir
+                / f"validation_transport_eta_sweep_T_{horizon}_{flow}_lambda_{value_stem(perturbation)}.png"
+            )
+
+
+def save_flow_comparison_splits(transport_runs, env, horizon, output_dir):
+    flows = {run["metadata"]["flow"] for run in transport_runs}
+    if not {"exact", "particle"}.issubset(flows):
+        return
+
+    best_runs = best_transport_eta_runs(transport_runs)
+    for perturbation in sorted({run["metadata"].get("perturbation") for run in best_runs}, key=sort_key):
+        split_runs = [run for run in best_runs if run["metadata"].get("perturbation") == perturbation]
+        split_flows = {run["metadata"]["flow"] for run in split_runs}
+        if not {"exact", "particle"}.issubset(split_flows):
+            continue
+        plot_flow_comparison(split_runs, env=env, horizon=horizon)
+        save_current(
+            output_dir
+            / (
+                f"flow_comparison_T_{horizon}_"
+                f"lambda_{value_stem(perturbation)}_best_eta.png"
+            )
+        )
+
+
 def make_standard_outputs(
     env,
     results_root,
@@ -70,14 +201,10 @@ def make_standard_outputs(
 
     for horizon in sorted({run["metadata"]["horizon"] for run in runs}):
         horizon_runs = [run for run in runs if run["metadata"]["horizon"] == horizon]
-        plot_validation_rewards(horizon_runs, env=env, horizon=horizon)
-        save_current(output_dir / f"validation_T_{horizon}.png")
+        save_validation_splits(horizon_runs, env, horizon, output_dir)
 
         transport_runs = [run for run in horizon_runs if run["metadata"]["algorithm"] == "transport"]
-        flows = {run["metadata"]["flow"] for run in transport_runs}
-        if "exact" in flows and "particle" in flows:
-            plot_flow_comparison(transport_runs, env=env, horizon=horizon)
-            save_current(output_dir / f"flow_comparison_T_{horizon}.png")
+        save_flow_comparison_splits(transport_runs, env, horizon, output_dir)
 
     save_table(runtime_table(runs), output_dir / "runtime.csv")
     save_table(objective_table(runs), output_dir / "objectives.csv")
@@ -93,7 +220,7 @@ def make_standard_outputs(
 
     if env in {"lq", "portfolio", "kuramoto"}:
         rows = []
-        for run in best_runs_by_label(runs):
+        for run in representative_plot_runs(runs):
             metadata = run["metadata"]
             table = flow_dataframe(run)
             table.insert(0, "seed", metadata["seed"])
@@ -110,7 +237,7 @@ def make_standard_outputs(
         if rows:
             save_table(pd.concat(rows, ignore_index=True), output_dir / "moment_flows.csv")
 
-    for run in best_runs_by_label(runs):
+    for run in representative_plot_runs(runs):
         metadata = run["metadata"]
         stem = (
             f"{metadata['algorithm']}_"

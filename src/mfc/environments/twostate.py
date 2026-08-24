@@ -10,7 +10,7 @@ class TwoStateConfig:
     p: float = 0.6
     T: int = 2
     gamma: float = 1.0 # No discount
-    n_train: int = 5_000
+    n_train: int = 10_000
     lr: float = 1e-3
     n_particles: int = 200
     n_logit_gradient: int = 10
