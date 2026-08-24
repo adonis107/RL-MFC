@@ -6,10 +6,11 @@ This chapter introduces the mathematical construction used to turn a mean-field 
 To keep the chapter focused on the construction and on the consequences of the main results, the more technical proofs are collected in Appendix~\ref{appendix:technical-proofs}. The main text keeps the statements and proof ideas needed to follow how the method fits together.
 
 \section{Canonical construction of the control problem}
+\label{sec:canonical-construction}
 
-Fix a horizon $T\in\N^\star$ and denote by $\Tc=\{0,1,\ldots,T\}$ the set of time indices. Let $\Xc$ be the state space and let $A$ be the one-step action space, both assumed to be Polish. Given a random variable $Y$ on a probability space $(\Omega,\Fc,\P)$, we denote by $\P_Y$ or $\Lc(Y)$ its law under $\P$.
+Fix a horizon $T\in\N^\star$ and denote by $\Tc=\{0,1,\ldots,T\}$ the set of time indices. Let $\Xc$ be the state space and let $\Ac$ be the one-step action space, both assumed to be Polish. Given a random variable $Y$ on a probability space $(\Omega,\Fc,\P)$, we denote by $\P_Y$ or $\Lc(Y)$ its law under $\P$.
 
-The notation $A$ is reserved for individual actions, whereas $\Ac$ denotes the set of admissible control processes. Given $\alpha=(\alpha_t)_{t=0}^{T-1}\in\Ac$ and an initial condition $\xi\sim\mu_0$, the controlled state process satisfies
+Individual actions take values in $\Ac$, whereas $\mathbb A$ denotes the set of admissible control processes, so that the notation agrees with Chapter~\ref{chapter:background}. Given $\alpha=(\alpha_t)_{t=0}^{T-1}\in\mathbb A$ and an initial condition $\xi\sim\mu_0$, the controlled state process satisfies
 \begin{align}
     \begin{cases}
         X_0=\xi,\\
@@ -20,7 +21,7 @@ The notation $A$ is reserved for individual actions, whereas $\Ac$ denotes the s
 or equivalently $\Lc\left(X_{t+1}\mid X_t,\P_{X_t},\alpha_t\right)=P_t(\cdot\mid X_t,\P_{X_t},\alpha_t)$. The reward functional is
 \begin{align}
     \label{eq:methodology-control_problem}
-    \sup_{\alpha\in\Ac}
+    \sup_{\alpha\in\mathbb A}
     J(\alpha)
     \coloneqq
     \E\left[
@@ -29,76 +30,20 @@ or equivalently $\Lc\left(X_{t+1}\mid X_t,\P_{X_t},\alpha_t\right)=P_t(\cdot\mid
     \right].
 \end{align}
 
-In the model-free setting, controls are sampled from randomized Markov policies. We denote by $\Pi=\left\{\pi=(\pi_t)_{t=0}^{T-1}:\pi_t:\Xc\times\Pc(\Xc)\to\Pc(A)\text{ is measurable}\right\}$ the set of admissible policies, and define $\Ac\coloneqq\left\{\alpha=(\alpha_t)_{t=0}^{T-1}:\Lc(\alpha_t\mid X_t,\P_{X_t})=\pi_t(\cdot\mid X_t,\P_{X_t})\text{ for some }\pi\in\Pi\right\}$. The control problem \eqref{eq:methodology-control_problem} can then be written directly over policies:
+In the model-free setting, controls are sampled from randomized Markov policies $\pi=(\pi_t)_{t=0}^{T-1}$ in the class $\Pi$, with $\pi_t:\Xc\times\Pc(\Xc)\to\Pc(\Ac)$ and $\alpha_t\sim\pi_t(\cdot\mid X_t,\P_{X_t})$, which gives the equivalent problem
 \begin{align}
     \label{eq:methodology-equivalent_control}
-    \sup_{\pi\in\Pi}
-    J(\pi)
-    \coloneqq
-    \E^\pi\left[
-        \sum_{t=0}^{T-1}r_t(X_t,\P_{X_t},\alpha_t)
-        +g(X_T,\P_{X_T})
-    \right],
+    \sup_{\pi\in\Pi} J(\pi) \coloneqq \E^\pi\left[\sum_{t=0}^{T-1}r_t(X_t,\P_{X_t},\alpha_t)+g(X_T,\P_{X_T})\right],
 \end{align}
-where $\E^\pi$ denotes expectation under the trajectory law induced by the policy $\pi$.
+where $\E^\pi$ is the expectation under the trajectory law induced by $\pi$.
 
-To solve \eqref{eq:methodology-equivalent_control} by policy gradient methods, we restrict to a parametrized family $\theta\mapsto\pi^\theta=(\pi_t^\theta)_{t=0}^{T-1}$, with $\theta\in\Theta\subset\R^k$. We write $X^\theta$ and $\alpha^\theta$ for the corresponding state and action processes, and the finite-dimensional objective becomes
-\begin{align}
-    \sup_{\theta\in\Theta}J(\theta)
-    =
-    J(\pi^\theta).
-\end{align}
+To solve \eqref{eq:methodology-equivalent_control} by policy gradient methods, we restrict to a parametrized family $\theta\mapsto\pi^\theta=(\pi_t^\theta)_{t=0}^{T-1}$, with $\theta\in\Theta\subset\R^k$. We write $X^\theta$ and $\alpha^\theta$ for the corresponding state and action processes, and the finite-dimensional objective becomes $\sup_{\theta\in\Theta}J(\theta) = J(\pi^\theta)$.
+
+Throughout, \emph{model-free} means that the estimator uses only simulated transitions, evaluations of the policy density and its score, and observed rewards: it never differentiates, and never evaluates in closed form, the transition kernel $P_t$, the reward $r_t$, or the population recursion. Exact population recursions and closed-form optima do appear in Chapter~\ref{chapter:experiments}, but only outside the training loop, to evaluate a frozen policy or to supply a reference; no such quantity enters a gradient step.
 
 The difficulty is that the policy and the reward depend on the population law $(\P_{X_t^\theta})_{t\in\Tc}$, whose sensitivity with respect to $\theta$ is not directly available in a model-free setting. The construction below introduces an exogenous randomization of these laws. The perturbed objective will converge to the original one as the perturbation scale $\lambda$ tends to zero, while providing a likelihood-ratio handle on the missing population derivative.
 
-We work on a probability space rich enough to support the following independent random variables:
-\begin{enumerate}
-    \item an initial variable $\xi\sim\mu_0$;
-    \item transition noises $(\epsilon_t)_{t=1}^{T}$ with common law $\rho\in\Pc(E)$;
-    \item policy noises $(\tilde\epsilon_t)_{t=0}^{T-1}$ with common law $\tilde\rho\in\Pc(\tilde E)$;
-    \item perturbation variables $(f_t)_{t=0}^{T}$ with common law $\nu\in\Pc(\mathsf F)$.
-\end{enumerate}
-By the representation theorem for probability kernels of Kallenberg \cite{kallenberg1997foundations}, the transition kernel can be represented by measurable maps $\Xc\times\Pc(\Xc)\times A\times E \ni(x,m,a,e)\mapsto F_t(x,m,a,e)$ such that $F_t(x,m,a,\cdot)\sharp\rho=P_t(\cdot\mid x,m,a)$. Similarly, each randomized policy can be represented by measurable maps $\Xc\times\Pc(\Xc)\times\tilde E\ni(x,m,\tilde e)\mapsto\tilde F_t^\theta(x,m,\tilde e)$ such that $\tilde F_t^\theta(x,m,\cdot)\sharp \tilde\rho= \pi_t^\theta(\cdot\mid x,m)$.
-
-\begin{remark}[Canonical construction of the problem]
-    The preceding variables can be realized on the canonical product space $\Omega=\Xc\times E^T\times\tilde E^T\times\mathsf F^{T+1}$, endowed with its Borel $\sigma$-algebra and with the product measure
-    \begin{align}
-        \P(\d\omega)
-        =
-        \mu_0(\d x_0)
-        \rho^{\otimes T}(\d\epsilon_{1:T})
-        \tilde\rho^{\otimes T}(\d\tilde\epsilon_{0:T-1})
-        \nu^{\otimes(T+1)}(\d f_{0:T}).
-    \end{align}
-\end{remark}
-
-For a fixed policy $\pi^\theta$, the unperturbed canonical process is defined by
-\begin{align}
-    \begin{cases}
-        X_0^\theta(\omega)=x_0,\\
-        \alpha_t^\theta(\omega)
-        =
-        \tilde F_t^\theta
-        \left(X_t^\theta(\omega),\P_{X_t^\theta},\tilde\epsilon_t(\omega)\right),\\
-        X_{t+1}^\theta(\omega)
-        =
-        F_t
-        \left(X_t^\theta(\omega),\P_{X_t^\theta},\alpha_t^\theta(\omega),\epsilon_{t+1}(\omega)\right),
-    \end{cases}
-    \qquad t=0,\ldots,T-1.
-\end{align}
-By construction, it follows that
-\begin{align}
-    \begin{cases}
-        X_0^\theta\sim\mu_0,\\
-        \Lc\left(\alpha_t^\theta\mid X_t^\theta,\P_{X_t^\theta}\right)
-        =
-        \pi_t^\theta(\cdot\mid X_t^\theta,\P_{X_t^\theta}),\\
-        \Lc\left(X_{t+1}^\theta\mid X_t^\theta,\P_{X_t^\theta},\alpha_t^\theta\right)
-        =
-        P_t(\cdot\mid X_t^\theta,\P_{X_t^\theta},\alpha_t^\theta).
-    \end{cases}
-\end{align}
+All the processes below are realized on a single canonical space carrying an initial variable $\xi\sim\mu_0$, transition noises $(\epsilon_t)_{t=1}^T$, policy noises $(\tilde\epsilon_t)_{t=0}^{T-1}$ and perturbation variables $(f_t)_{t=0}^{T}$, all independent. By the representation theorem for probability kernels \cite{kallenberg1997foundations}, the transition kernel and the randomized policy can then be written as measurable maps $F_t$ and $\tilde F_t^\theta$ of a state, a population argument and a noise, so that the unperturbed process $(X_t^\theta,\alpha_t^\theta)$ is a deterministic function of $\theta$ and of the noises. This is what allows the perturbed and unperturbed processes to be compared pathwise, under common random numbers, throughout the chapter. Appendix~\ref{appendix:canonical-construction} records the construction.
 
 \section{Perturbed process and value function}
 
@@ -212,12 +157,9 @@ Therefore
 
 \section{Discrete-state space}
 
-Let $\Xc=\{1,\ldots,N\}$. Define the probability simplex on $\Xc$ as $\Delta_N\coloneqq\{p\in\R_+^N : \sum_{i=1}^p p_i=1\}$ and denote $\Delta_N^\circ$ its relative interior. For a policy parameter $\theta\in\Theta$, let $\mu_t^\theta(i)\coloneqq \P(X_t^\theta=i)$ be the law of the unperturbed controlled state process, for $i\in\{1,\ldots,N\}$.
+Let $\Xc=\{1,\ldots,N\}$. Define the probability simplex on $\Xc$ as $\Delta_N\coloneqq\{p\in\R_+^N : \sum_{i=1}^N p_i=1\}$ and denote $\Delta_N^\circ$ its relative interior. For a policy parameter $\theta\in\Theta$, let $\mu_t^\theta(i)\coloneqq \P(X_t^\theta=i)$ be the law of the unperturbed controlled state process, for $i\in\{1,\ldots,N\}$.
 
-We introduce a random perturbation of the population law $\mu_t^\theta$ while keeping the perturbed object inside the simplex. Consider a stochastic matrix $Q_t = (Q_t^{i,j})_{1\leq i,j\leq N}$, and focus on the rank-one perturbation $Q_t^{j,i} = q_t^i$ where $q_t$ is a random element of $\Delta_N^\circ$. The perturbed population law is then
-\begin{align}
-    M_t^{\lambda,\theta}(\omega)\coloneqq (1-\lambda)\mu_t^\theta + \lambda q_t(\omega).
-\end{align}
+We introduce a random perturbation of the population law $\mu_t^\theta$ while keeping the perturbed object inside the simplex. Consider a stochastic matrix $Q_t = (Q_t^{i,j})_{1\leq i,j\leq N}$, and focus on the rank-one perturbation $Q_t^{j,i} = q_t^i$ where $q_t$ is a random element of $\Delta_N^\circ$. The perturbed population law is then $M_t^{\lambda,\theta}(\omega)\coloneqq (1-\lambda)\mu_t^\theta + \lambda q_t(\omega)$.
 Notice that $M_t^{\lambda,\theta}$ is a random probability vector, but it should not be identified with the law of the perturbed state process defined below.
 
 We now define the perturbed controlled process
@@ -242,10 +184,7 @@ For each $t$, let $U_t$ be an $\R^{N-1}$-valued random vector with density $\rho
         \frac{\exp(u_1)}{1 + \sum_{j=1}^{N-1}\exp(u_j)},\ldots, \frac{\exp(u_{N-1})}{1 + \sum_{j=1}^{N-1}\exp(u_j)}, \frac{1}{1 + \sum_{j=1}^{N-1}\exp(u_j)}
     \right).
 \end{align}
-Its inverse is
-\begin{align}
-    \varphi^{-1}(p) = \left(\log\frac{p_1}{p_N},\ldots,\log\frac{p_{N-1}}{p_N} \right),\qquad p\in\Delta_N^\circ.
-\end{align}
+Its inverse is $\varphi^{-1}(p) = \left(\log\frac{p_1}{p_N},\ldots,\log\frac{p_{N-1}}{p_N} \right),\qquad p\in\Delta_N^\circ$.
 
 For fixed $(t,\lambda,\theta)$, define the affine map $\phi_t^{\lambda, \theta}:\Delta_N^\circ\to\Delta_N^\circ$ such that $\phi_t^{\lambda,\theta}(p)\coloneqq (1-\lambda)\mu_t^\theta + \lambda p$. Then
 \begin{align}
@@ -254,33 +193,21 @@ For fixed $(t,\lambda,\theta)$, define the affine map $\phi_t^{\lambda, \theta}:
 \end{align}
 
 \begin{theorem}[Perturbation estimate]
-    Let $\lambda\in(0,1)$ and let $q_t\in\Delta_N$. For the perturbed population law $M_t^{\lambda,\theta}(\omega) = (1-\lambda)\mu_t^\theta + \lambda q_t(\omega)$, we have
-    \begin{align}
-        d_\mathrm{TV}(M_t^{\lambda,\theta}(\omega), \mu_t^\theta) \leq \lambda, \qquad \text{for every }\omega.
-    \end{align}
-    Moreover, if $\Xc$ is endowed with a metric $d_\Xc$ of diameter $\mathrm{diam}(\Xc)\coloneqq \max_{i,j\in\Xc} d_\Xc(i,j)$, then
-    \begin{align}
-        W_1(M_t^{\lambda,\theta}(\omega), \mu_t^\theta)\leq \mathrm{diam}(\Xc)\lambda,\qquad \text{for every }\omega.
-    \end{align}
+    \label{theorem:discrete-perturbation-estimate}
+    Let $\lambda\in(0,1)$ and let $q_t\in\Delta_N$. For the perturbed population law $M_t^{\lambda,\theta}(\omega) = (1-\lambda)\mu_t^\theta + \lambda q_t(\omega)$, we have $d_\mathrm{TV}(M_t^{\lambda,\theta}(\omega), \mu_t^\theta) \leq \lambda, \qquad \text{for every }\omega$.
+    Moreover, if $\Xc$ is endowed with a metric $d_\Xc$ of diameter $\mathrm{diam}(\Xc)\coloneqq \max_{i,j\in\Xc} d_\Xc(i,j)$, then $W_1(M_t^{\lambda,\theta}(\omega), \mu_t^\theta)\leq \mathrm{diam}(\Xc)\lambda,\qquad \text{for every }\omega$.
     Consequently, for any of the distances above, there exists a function $h(\lambda)$ such that
     \begin{align}
         \E\left[d(M_t^{\lambda,\theta}, \mu_t^\theta) \right]\leq h(\lambda),\qquad h(\lambda)\xrightarrow[\lambda\downarrow0]{}0.
     \end{align}
 \end{theorem}
 
-\begin{proof}
-    For every $\omega$, $M_t^{\lambda,\theta}(\omega)-\mu_t^\theta = \lambda(q_t(\omega)-\mu_t^\theta)$, hence $\| M_t^{\lambda,\theta}(\omega)-\mu_t^\theta\|_1 = \lambda\|q_t(\omega)-\mu_t^\theta\|_1\leq 2\lambda$ because both $q_t$ and $\mu_t^\theta$ belong to $\Delta_N$. The total variance estimate follows from $d_\mathrm{TV}(p,p')=\frac{1}{2}\|p-p'\|_1$ on a finite space \cite{levin2026markov}.
+The two estimates follow from $M_t^{\lambda,\theta}-\mu_t^\theta=\lambda(q_t-\mu_t^\theta)$ and from the domination of $W_1$ by the total-variation distance; see Appendix~\ref{appendix:discrete-perturbation-estimate}.
 
-    For the Wasserstein estimate, let $\gamma$ be any coupling of $M_t^{\lambda,\theta}$ and $\mu_t^\theta$. Since $d_\Xc(i,j)\leq\mathrm{diam}(\Xc)$, we have $\sum_{i,j\in\Xc} d_\Xc(i,j)=\gamma(i,j)\leq \mathrm{diam}(\Xc)\sum_{i\neq j}\gamma(i,j)$. Taking the infimum over all couplings:
-    \begin{align}
-        W_1(M_t^{\lambda,\theta}(\omega),\mu_t^\theta)\leq\mathrm{diam}(\Xc)d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta).
-    \end{align}
-    Thus $W_1(M_t^{\lambda,\theta}, \mu_t^\theta) \leq \mathrm{diam}(\Xc)\lambda$. The expectation estimate follows immediately since the previous bounds hold almost surely.
-\end{proof}
-
-We can now compute and get an explicit score function of the density of $M_t^{\lambda,\theta}$ on the simplex.
+We now compute the density of $M_t^{\lambda,\theta}$ on the simplex and its score.
 
 \begin{proposition}[Density of the logistic perturbation]
+    \label{prop:discrete-perturbation-density}
     Assume that $U_t$ has density $\rho$ on $\R^{N-1}$. Then $q_t = \varphi(U_t)$ admits the density
     \begin{align}
         f_q(p) = \rho\left(\log\frac{p_1}{p_N},\ldots,\log\frac{p_{N-1}}{p_N} \right) \frac{1}{\prod_{i=1}^N p_i}, \qquad p\in\Delta_N^\circ.
@@ -290,7 +217,7 @@ We can now compute and get an explicit score function of the density of $M_t^{\l
 The proof is a change-of-variables calculation on the simplex coordinates and is given in Appendix~\ref{appendix:discrete-density-proofs}.
 
 \begin{proposition}[Density of the perturbed population law]
-    Let $\Lambda_t^{\lambda,\theta}\coloneqq \{(1-\lambda)\mu_t^\theta+\lambda m, m\in\Delta_N^\circ\}$. For $m\in\Lambda_t^{\lambda,\theta}$, define $p_i^{\lambda,\theta}(m)\coloneqq (m_i - (1-\lambda)\mu_t^\theta(i))/\lambda$ for $i=1,\ldots, N-1$ and $p_N^{\lambda,\theta}(m)=(\phi_t^{\lambda,\theta})^{-1}(m)$. Then $M_t^{\lambda,\theta}$ admits the density
+    Let $\Lambda_t^{\lambda,\theta}\coloneqq \{(1-\lambda)\mu_t^\theta+\lambda m, m\in\Delta_N^\circ\}$. For $m\in\Lambda_t^{\lambda,\theta}$, define $p_i^{\lambda,\theta}(m)\coloneqq (m_i - (1-\lambda)\mu_t^\theta(i))/\lambda$ for $i=1,\ldots,N$; equivalently, $p^{\lambda,\theta}(m)=(\phi_t^{\lambda,\theta})^{-1}(m)$. Then $M_t^{\lambda,\theta}$ admits the density
     \begin{align}
         f_t^{\lambda,\theta}(m)
         = \frac{1}{\lambda^{N-1}}
@@ -322,10 +249,7 @@ For $\theta\in\Theta$, define the averaged transition kernel, a probability meas
 \begin{align}
     K_t^\theta(j\mid i,m) \coloneqq \int_\Ac P_t(j\mid i,m,a) \pi_t^\theta(\d a\mid i,m),\qquad i,j\in\Xc,\ m\in\Delta_N,
 \end{align}
-and the averaged running reward
-\begin{align}
-    R_t^\theta(i,m)\coloneqq \int_\Ac r_t(i,m,a)\pi_t^\theta(\d a\mid i,m),\qquad i\in\Xc,\ m\in\Delta_N.
-\end{align}
+and the averaged running reward $R_t^\theta(i,m)\coloneqq \int_\Ac r_t(i,m,a)\pi_t^\theta(\d a\mid i,m),\qquad i\in\Xc,\ m\in\Delta_N$.
 The unperturbed law and the perturbed dynamics each then satisfy
 \begin{align}
     \mu_{t+1}^\theta(j) = \sum_{i=1}^N \mu_t^\theta(i) K_t^\theta(j\mid i,\mu_t^\theta),\qquad
@@ -338,7 +262,7 @@ Indeed, by the tower property,
     \nu_{t+1}^{\lambda,\theta}(j)
     &= \P(X_{t+1}^{\lambda,\theta}=j) = \E\left[\mathbf 1_{\{X_{t+1}^{\lambda,\theta}=j \}} \right] \\
     &= \E\left[\E\left[\mathbf 1_{\{X_{t+1}^{\lambda,\theta}=j \}} \mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}, \alpha_t^{\lambda,\theta}\right] \right] \\
-    &= \E\left[P_t(j\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}\alpha_t^{\lambda,\theta}) \right].
+    &= \E\left[P_t(j\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}, \alpha_t^{\lambda,\theta}) \right].
 \end{align}
 Conditioning now on $(X_t^{\lambda,\theta}, M_t^{\lambda,\theta})$, and using $\alpha_t^{\lambda,\theta} \sim \pi_t^\theta(\cdot\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta})$, we obtain
 \begin{align}
@@ -363,30 +287,22 @@ Conditioning now on $(X_t^{\lambda,\theta}, M_t^{\lambda,\theta})$, and using $\
 
 \begin{lemma}[Stability of the state marginal]
     \label{lemma:stability-state-marginal}
-    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$ and every $t=0,\ldots,T$,
-    \begin{align}
-        d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)\leq L_K\lambda t.
-    \end{align}
+    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$ and every $t=0,\ldots,T$, $d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)\leq L_K\lambda t$.
 \end{lemma}
 
 The proof is a finite-horizon induction based on the dual representation of total variation; see Appendix~\ref{appendix:objective-convergence-proofs}.
 
 \begin{theorem}[Convergence of the perturbed objective]
     \label{theorem:discrete-convergence-objective}
-    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$,
-    \begin{align}
-        |J^\lambda(\theta) - J(\theta)|\leq C_T\lambda.
-    \end{align}
-    If the constants in the assumption are uniform in $\theta$, the the convergence is uniform.
+    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$, $|J^\lambda(\theta) - J(\theta)|\leq C_T\lambda$.
+    If the constants in the assumption are uniform in $\theta$, then the convergence is uniform.
 \end{theorem}
 
 The proof decomposes running and terminal reward errors into marginal and population-argument errors, then uses Lemma~\ref{lemma:stability-state-marginal}; see Appendix~\ref{appendix:objective-convergence-proofs}.
 
 \begin{corollary}[Consistency of optimizers]
-    Assume that $\Theta$ is compact, that $J$ is continuous on $\theta$, and that $\sup_{\theta\in\Theta} |J^\lambda(\theta) - J(\theta)|\xrightarrow[\lambda\downarrow0]{}0$. Let $\theta_\lambda^\star\in\argmax_{\theta\in\Theta} J^\lambda(\theta)$ and suppose that, along a sequence $\lambda_n\downarrow0$, $\theta_{\lambda_n}^\star \to \bar \theta$. Then
-    \begin{align}
-        \bar \theta \in \argmax_{\theta\in\Theta}J(\theta).
-    \end{align}
+    \label{cor:discrete-optimizer-consistency}
+    Assume that $\Theta$ is compact, that $J$ is continuous on $\theta$, and that $\sup_{\theta\in\Theta} |J^\lambda(\theta) - J(\theta)|\xrightarrow[\lambda\downarrow0]{}0$. Let $\theta_\lambda^\star\in\argmax_{\theta\in\Theta} J^\lambda(\theta)$ and suppose that, along a sequence $\lambda_n\downarrow0$, $\theta_{\lambda_n}^\star \to \bar \theta$. Then $\bar \theta \in \argmax_{\theta\in\Theta}J(\theta)$.
     In particular, if $J$ admits a unique maximizer $\theta^\star$, then $\theta_\lambda^\star \to \theta^\star$ as $\lambda\downarrow0$.
 \end{corollary}
 
@@ -417,24 +333,18 @@ Theorem~\ref{theorem:discrete-convergence-objective} proves the convergence of t
         \left| D_mg(i,m)[v] - D_mg(i,m')[v]\right| &\leq C_1\|v\|_1 d_\mathrm{TV}(m,m'),\\
         \left| D_mg(i,m)[v] - D_mg(i,m)[v']\right| &\leq C_1\|v -v'\|_1.
     \end{align}
-    Finally, all first-order derivations appearing above are uniformly bounded.
+    Finally, all first-order derivatives appearing above are uniformly bounded.
 \end{assumption}
 
 \begin{lemma}[Stability of the differentiated state marginal]
-    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^D > 0$ such that, for every $\theta\in\Theta$, every $\lambda\in(0,1)$, every unit direction $h$, and every $t=0,\ldots,T$,
-    \begin{align}
-        \left\|E_t^{\lambda,\theta}[h] - D_t^\theta[h] \right\|_1 \leq C_T^D\lambda.
-    \end{align}
+    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^D > 0$ such that, for every $\theta\in\Theta$, every $\lambda\in(0,1)$, every unit direction $h$, and every $t=0,\ldots,T$, $\left\|E_t^{\lambda,\theta}[h] - D_t^\theta[h] \right\|_1 \leq C_T^D\lambda$.
 \end{lemma}
 
 The proof differentiates the two marginal recursions, compares the resulting triangular systems, and applies a finite-horizon induction; see Appendix~\ref{appendix:gradient-convergence-proofs}.
 
 \begin{theorem}[Gradient-level convergence]
     \label{theorem:discrete-gradient-convergence}
-    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^\nabla > 0$ such that, for every $\theta\in\Theta$ and every $\lambda\in(0,1)$,
-    \begin{align}
-        \|\nabla_\theta J^\lambda(\theta) - \nabla_\theta J(\theta)\| \leq C_T^\nabla \lambda.
-    \end{align}
+    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^\nabla > 0$ such that, for every $\theta\in\Theta$ and every $\lambda\in(0,1)$, $\|\nabla_\theta J^\lambda(\theta) - \nabla_\theta J(\theta)\| \leq C_T^\nabla \lambda$.
     If the constants in the assumption are uniform in $\theta$, then the convergence is uniform in $\theta$.
 \end{theorem}
 
@@ -457,183 +367,55 @@ The law of this trajectory has density, with respect to the product reference me
 \begin{align}
     \mu_0(x_0) \prod_{t=0}^{T-1}\left[f_t^{\lambda,\theta}(m_t) p_t^\theta(a_t\mid x_t, m_t) P_t(x_{t+1}\mid x_t,a_t,m_t) \right] f_T^{\lambda,\theta}(m_T).
 \end{align}
-Here, the transition probabilities $P_t$ do not depend directly on $\theta$. Their dependence on $\theta$ has been moved to the random population argument $M_t^{\lambda,\theta}$ through its density $f_t^{\lambda,\theta}$.
+Here, the transition probabilities $P_t$ do not depend directly on $\theta$. Their dependence on $\theta$ has been moved to the random population argument $M_t^{\lambda,\theta}$ through its density $f_t^{\lambda,\theta}$. Because the support $\Lambda_t^{\lambda,\theta}$ may move with $\theta$, the following likelihood-ratio statement is understood under a common-support or vanishing-boundary-term condition; equivalently, differentiation of the induced trajectory law is justified without extra boundary contributions.
 
 \begin{assumption}[Differentiability and integrability]
-    For every $t=0,\ldots,T-1$, the randomized policy admits a density with respect to a reference measure $\nu_\Ac$ on $\Ac$:
-    \begin{align}
-        \pi_t^\theta(\d a\mid i,m) = p_t^\theta(a\mid i,m)\nu_\Ac(\d a),\qquad i\in\Xc,\ m\in\Delta_N.
-    \end{align}
-    Assume additionally that $p_t^\theta(a\mid i,m) > 0$ and that $p_t^\theta(a\mid i,m)$ is continuously differentiable with respect to $\theta$. With a slight abuse of notation, we write $\nabla_\theta \log\pi_t^\theta(a\mid i,m)\coloneqq \nabla_\theta\log p_t^\theta(a\mid i,m)$.
-
-    Moreover, for every $t=0,\ldots,T$, the perturbation density $f_t^{\lambda,\theta}$ is strictly positive on the relative interior of its support $\Lambda_t^{\lambda,\theta}$, and is continuously differentiable with respect to $\theta$ for fixed $m$ in this support.
-
-    Finally, we assume that differentiation under the integral sign is justified. Equivalently, the trajectory score
-    \begin{align}
-        S_\theta^\lambda = \sum_{t=0}^{T-1} \nabla_\theta \log p_t^\theta(\alpha_t^{\lambda,\theta}\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}) + \sum_{t=0}^T \nabla_\theta \log f_t^{\lambda,\theta}(M_t^{\lambda,\theta})
-    \end{align}
-    is integrable against the perturbed return, namely $\E[\|\Rc_\theta^\lambda S_\theta^\lambda\|] < \infty$.
+    For every $t$, the randomized policy admits a density $p_t^\theta(a\mid i,m)$ with respect to a reference measure $\nu_\Ac$ on $\Ac$, strictly positive and continuously differentiable in $\theta$; the perturbation density $f_t^{\lambda,\theta}$ is strictly positive on the relative interior of $\Delta_N$ and continuously differentiable in $\theta$; and differentiation under the integral sign is justified, equivalently the trajectory score $S_\theta^\lambda$ of \eqref{eq:discrete-trajectory-score} satisfies $\E[\|\Rc_\theta^\lambda S_\theta^\lambda\|]<\infty$.
 \end{assumption}
 
 \begin{theorem}[Policy-gradient formula for the perturbed objective]
     \label{theorem:discrete-policy-gradient-formula}
-    Under the previous assumptions,
-    \begin{align}
-        \nabla_\theta J^\lambda(\theta) = \E[\Rc_\theta^\lambda S_\theta^\lambda],
-    \end{align}
+    Under the previous assumptions, $\nabla_\theta J^\lambda(\theta) = \E[\Rc_\theta^\lambda S_\theta^\lambda]$,
     where, using Corollary~\ref{corollary:discrete-score-density}, the score of the perturbed trajectory is
     \begin{align}
+        \label{eq:discrete-trajectory-score}
         S_\theta^\lambda
         &\coloneqq \sum_{t=0}^{T-1} \nabla_\theta \log p_t^\theta(\alpha_t^{\lambda,\theta}\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}) + \sum_{t=0}^T \nabla_\theta \log f_t^{\lambda,\theta}(M_t^{\lambda,\theta})\\
         &= \sum_{t=0}^{T-1} \nabla_\theta \log p_t^\theta(\alpha_t^{\lambda,\theta}\mid X_t^{\lambda,\theta}, M_t^{\lambda,\theta}) - \frac{1-\lambda}{\lambda} \sum_{t=0}^T \sum_{k=1}^{N-1} H_k(q_t) \nabla_\theta \mu_t^\theta(k).
     \end{align}
 \end{theorem}
 
-\begin{proof}
-    Let $L_\theta^\lambda$ be the density of the complete perturbed trajectory $\Gamma^\lambda$. The only direct dependence of $L_\theta^\lambda$ on $\theta$ comes from the policy densities $p_t^\theta(a_t\mid x_t,m_t)$ and from the perturbation densities $f_t^{\lambda,\theta}(m_t)$; the transition kernels have no direct $\theta$-dependence once the sampled population arguments are fixed. Therefore
-    \begin{align}
-        \nabla_\theta\log L_\theta^\lambda(\gamma)
-        =
-        \sum_{t=0}^{T-1}\nabla_\theta\log p_t^\theta(a_t\mid x_t,m_t)
-        +
-        \sum_{t=0}^T\nabla_\theta\log f_t^{\lambda,\theta}(m_t)
-        =
-        S_\theta^\lambda(\gamma).
-    \end{align}
-    Differentiating under the integral sign and using $\nabla_\theta L_\theta^\lambda=L_\theta^\lambda\nabla_\theta\log L_\theta^\lambda$ yields
-    \begin{align}
-        \nabla_\theta J^\lambda(\theta)
-        &=
-        \nabla_\theta\int \Rc^\lambda(\gamma)L_\theta^\lambda(\gamma)\,\d\gamma
-        =
-        \int \Rc^\lambda(\gamma)\nabla_\theta L_\theta^\lambda(\gamma)\,\d\gamma\\
-        &=
-        \int \Rc^\lambda(\gamma)S_\theta^\lambda(\gamma)L_\theta^\lambda(\gamma)\,\d\gamma
-        =
-        \E[\Rc_\theta^\lambda S_\theta^\lambda].
-    \end{align}
-\end{proof}
+The proof differentiates the density of the perturbed trajectory under the integral sign; the transition kernels carry no direct $\theta$-dependence once the sampled population arguments are fixed, so only the policy and perturbation densities contribute. See Appendix~\ref{appendix:discrete-policy-gradient-proof}.
 
 \begin{corollary}[Baseline version]
-    Let $b\in\R$ be any deterministic baseline. Then
-    \begin{align}
-        \nabla_\theta J^\lambda(\theta) = \E[(\Rc_\theta^\lambda - b)S_\theta^\lambda].
-    \end{align}
+    \label{cor:discrete-baseline}
+    Let $b\in\R$ be any deterministic baseline. Then $\nabla_\theta J^\lambda(\theta) = \E[(\Rc_\theta^\lambda - b)S_\theta^\lambda]$.
     More generally, one may use any baseline $b$ such that $\E[bS_\theta^\lambda] = 0$.
 \end{corollary}
 
-\begin{proof}
-    Since $L_\theta^\lambda$ is a probability density, differentiating $\int L_\theta^\lambda(\gamma)\,\d\gamma=1$ gives $\E[S_\theta^\lambda]=0$. Hence, for any deterministic $b$,
-    \begin{align}
-        \E[\Rc^\lambda_\theta S^\lambda_\theta]
-        =
-        \E[(\Rc^\lambda_\theta-b)S^\lambda_\theta]+b\E[S^\lambda_\theta]
-        =
-        \E[(\Rc^\lambda_\theta-b)S^\lambda_\theta].
-    \end{align}
-\end{proof}
+This follows from $\E[S_\theta^\lambda]=0$; see Appendix~\ref{appendix:discrete-policy-gradient-proof}.
 
 
-\subsection{Estimation of the population-flow sensitivity}
+\subsection{Estimating the sensitivity and assembling the estimator}
+\label{subsec:discrete-estimator}
 
-The policy-gradient formula from Theorem~\ref{theorem:discrete-policy-gradient-formula} still contains the population-flow sensitivity $D_t^\theta(k)\coloneqq \nabla_\theta \mu_t^\theta(k)$, for $t=0,\ldots,T$ and $k=1,\ldots,N-1$. This quantity is not directly observed from a single trajectory. Moreover, the usual likelihood-ratio identity does not provide an exact model-free estimator in the mean-field setting, because the transition kernel and the policy depend on the whole population law $\mu_t^\theta$, which itself depends on $\theta$.
+The gradient formula of Theorem~\ref{theorem:discrete-policy-gradient-formula} still contains the population-flow sensitivity $D_t^\theta(k)\coloneqq\nabla_\theta\mu_t^\theta(k)$, which is not observed along a single trajectory and for which the plain likelihood-ratio identity gives no exact model-free estimator, because the kernel and the policy both read the whole law $\mu_t^\theta$. We estimate it by applying the same perturbation idea one level down. An auxiliary batch is simulated under the population argument $\bar M_s^{\eta,\theta}=(1-\eta)\mu_s^\theta+\eta\bar q_s$, at an auxiliary scale $\eta$ that need not equal $\lambda$, and differentiating the auxiliary marginal $\mu_{t,k}^\eta(\theta)=\P(\bar X_t^{\eta,\theta}=k)$ by the likelihood-ratio identity gives, in the limit $\eta\downarrow0$, a representation of $D_t^\theta(k)$ as an expectation of an indicator against the accumulated policy and perturbation scores up to time $t-1$. Two features of that representation matter. It is triangular in time, since $D_t^\theta$ involves only $D_0^\theta,\ldots,D_{t-1}^\theta$, and $D_0^\theta=0$ because $\mu_0$ does not depend on $\theta$; the whole sensitivity flow can therefore be estimated by a single forward recursion, which is what makes the simulator cost linear rather than quadratic in the horizon. Averaging over $n$ auxiliary trajectories yields the plug-in estimator $\widehat D_t^{\eta,n,\theta}(k)$, with $\widehat D_t^{\eta,n,\theta}(N)=-\sum_{k<N}\widehat D_t^{\eta,n,\theta}(k)$.
 
-We therefore construct an auxiliary estimator of $D_t^\theta$ using the same perturbation idea as above. Since $\sum_{i=1}^N \mu_t^\theta(i) = 1$, we have $\sum_{i=1}^N D_t^\theta(i) = 0$ and it is enough to estimate $D_t^\theta(1),\ldots, D_t^\theta(N-1)$ and then recover $D_t^\theta(N)$.
-
-Let $\eta\in(0,1)$ be an auxiliary perturbation parameter, possibly different from the perturbation $\lambda$ used in the policy-gradient estimator. For $s=0,\ldots,T$, let $\bar M_s^{\eta,\theta} \coloneqq (1-\eta)\mu_s^\theta + \eta \bar q_s$, where $\bar q_s\in\Delta_N^\circ$ is generated by the same logistic parametrization as before. The auxiliary perturbed process is
+Combining it with the main batch gives the estimator used throughout. With $B$ perturbed trajectories, perturbed returns $\Rc_\theta^{\lambda,(b)}$, a deterministic baseline $b_0$, policy score $\Sc_{\mathrm{pol}}^{\lambda,\theta,(b)}$ and estimated perturbation score
 \begin{align}
-    \begin{cases}
-        \bar{X}_0^{\eta, \theta} \sim \mu_0, \\
-        \bar{\alpha}_s^{\eta, \theta} \sim \pi_s^\theta(\cdot \mid \bar{X}_s^{\eta, \theta}, \bar{M}_s^{\eta, \theta}), \\
-        \bar{X}_{s+1}^{\eta, \theta} \sim P_s(\cdot \mid \bar{X}_s^{\eta, \theta}, \bar{M}_s^{\eta, \theta}, \bar\alpha_s^{\eta, \theta}), \qquad s=0,\ldots, T-1.
-    \end{cases}
-\end{align}
-The corresponding policy-score term is $\Psi_s^{\eta, \theta} \coloneqq \nabla_\theta \log p_s^\theta (\bar\alpha_s^{\eta, \theta} \mid \bar X_s^{\eta, \theta}, \bar M_s^{\eta, \theta})$. The perturbation-density score at time $s$ is
-\begin{align}
-    -\frac{1-\eta}{\eta} \sum_{\ell=1}^{N-1}H_\ell(\bar q_s)D_s^\theta(\ell).
-\end{align}
-
-For fixed $t\in\{1,\ldots,T\}$ and $k\in\{1,\ldots,N-1\}$, consider the auxiliary objective $\mu_{t,k}^\eta(\theta) \coloneqq \E\left[\mathbf 1_{\{\bar X_t^{\eta,\theta}=k \}} \right]$. Applying the perturbed likelihood ratio formula to the terminal reward $\mathbf 1_{\{\bar X_t^{\eta,\theta}=k \}}$ and using causality, gives the formal identity
-\begin{align}
-    \nabla_\theta \mu_{t,k}^\eta(\theta) = \E \left[ \mathbf{1}_{\{\bar X_t^{\eta, \theta}=k\}} \sum_{s=0}^{t-1}\Xi_s^{\eta, \theta} \right].
-\end{align}
-The terms with $s\geq t$ vanish because the event $\{\bar X_t^{\eta, \theta}=k\}$ does not depend on future actions or future perturbations.
-
-Since $\bar M_s^{\eta, \theta}$ converges to $\mu_s^\theta$ as $\eta\downarrow0$, we expect $\mu_{t,k}^\eta(\theta) \xrightarrow[\eta\downarrow0]{} \mu_t^\theta(k)$. Under a gradient-level convergence assumption, this yields
-\begin{align}
-    D_t^\theta(k) = \lim_{\eta\downarrow0}\E\left[ \mathbf{1}_{\{\bar X_t^{\eta,\theta}=k\}} \sum_{s=0}^{t-1} \left(\Psi_s^{\eta, \theta} - \frac{1-\eta}{\eta}\sum_{\ell=1}^{N-1}H_\ell(\bar q_s)D_s^\theta(\ell) \right) \right].
-\end{align}
-This relation is triangular in time: the sensitivity $D_t^\theta$ depends only on $D_0^\theta, \ldots, D_{t-1}^\theta$. Since the initial law $\mu_0$ is independent of $\theta$, we have $D_0^\theta(k) = 0$ for $k=1,\ldots,N$. Therefore, the sensitivities can be estimated recursively forward in time.
-
-Let $n\geq 1$ be the number of auxiliary trajectories used to estimate the population-flow sensitivity. For each $r=1,\ldots,n$, simulate an independent auxiliary perturbed trajectory $\left(\bar q_s^{(r)}, \bar M_s^{\eta,\theta,(r)}, \bar X_s^{\eta,\theta,(r)}, \bar \alpha_s^{\eta,\theta,(r)} \right)_{s=0}^T$. Define $\psi_s^{\eta,\theta,(r)} \coloneqq \nabla_\theta \log p_s^\theta(\bar \alpha_s^{\eta,\theta,(r)}\mid \bar X_s^{\eta,\theta,(r)}, \bar M_s^{\eta,\theta,(r)})$. We initialize $\widehat D_0^{\eta,n,\theta}(k)=0$ for $k=1,\ldots,N$. Then, for $t=1,\ldots,T$ and $k=1,\ldots,N-1$, define recursively
-\begin{align}
-    \widehat D_t^{\eta,n,\theta} (k) \coloneqq \frac{1}{n} \sum_{r=1}^n \mathbf 1_{\{\bar X_t^{\eta,\theta,(r)}=k\}} \left[\sum_{s=0}^{t-1}\psi_s^{\eta,\theta,(r)} - \frac{1-\eta}{\eta}\sum_{s=0}^{t-1} \sum_{\ell=1}^{N-1} H_\ell(\bar q_s^{(r)}) \widehat D_s^{\eta,n,\theta}(\ell) \right].
-\end{align}
-Finally, set $\widehat D_t^{\eta,n,\theta}(N) \coloneqq - \sum_{k=1}^{N-1} \widehat D_t^{\eta,n,\theta}(k)$.
-
-\begin{remark}[Empirical population law]
-    In a fully simulation-based implementation, in order to construct $\bar M_s^{\eta,\theta} = (1-\eta)\mu_s^\theta + \eta\bar q_s$, $\mu_s^\theta$ may be replaced by an empirical population law
-    \begin{align}
-        \widehat \mu_s^\theta(i) = \frac{1}{M} \sum_{m=1}^M \mathbf 1_{\{X_s^{\theta,(m)} = i\}},\qquad i=1,\ldots,N,
-    \end{align}
-    computed from a batch of independent unperturbed trajectories. This introduces an additional sampling error, which can be treated separately in the final mean-square error decomposition.
-\end{remark}
-
-\subsection{Monte Carlo estimator of the perturbed policy gradient}
-
-We now combine the perturbed policy-gradient formula with the auxiliary estimator of the population-flow sensitivity to obtain a fully sample-based estimator of $\nabla_\theta J^\lambda (\theta)$. The only non-directly observable term in the policy-gradient formula is $\left(D_t^\theta(k) \right)_{0\leq t\leq T,\ 1\leq k\leq N-1}$, which we replace by the auxiliary estimator $\widehat D_t^{\eta,n,\theta}(k)$.
-
-Let $B \geq 1$ be the number of trajectories used to estimate the perturbed policy gradient, and assume that the auxiliary batch used to compute $\widehat D_t^{\eta,n,\theta}(k)$ is independent of the batch used below. For each $b=1,\ldots,B$, simulate an independent perturbed trajectory $\left(q_t^{(b)}, M_t^{\lambda,\theta,(b)}, X_t^{\lambda,\theta,(b)},\alpha_t^{\lambda,\theta,(b)} \right)_{t=0}^T$ according to
-\begin{align}
-    \begin{cases}
-        X_0^{\lambda,\theta,(b)} &\sim \mu_0,\\
-        M_t^{\lambda,\theta,(b)} &=(1-\lambda)\mu_t^\theta + \lambda q_t^{(b)},\\
-        \alpha_t^{\lambda,\theta,(b)} &\sim \pi_t^\theta(\cdot\mid X_t^{\lambda,\theta,(b)}, M_t^{\lambda,\theta,(b)}),\\
-        X_{t+1}^{\lambda,\theta,(b)} &\sim P_t(\cdot\mid X_t^{\lambda,\theta,(b)}, M_t^{\lambda,\theta,(b)}, \alpha_t^{\lambda,\theta,(b)}).
-    \end{cases}
-\end{align}
-The corresponding perturbed return is
-\begin{align}
-    \Rc_\theta^{\lambda,(b)} \coloneqq \sum_{t=0}^{T-1} r_t(X_t^{\lambda,\theta,(b)}, M_t^{\lambda,\theta,(b)},\alpha_t^{\lambda,\theta,(b)}) + g(X_T^{\lambda,\theta,(b)},M_T^{\lambda,\theta,(b)}).
-\end{align}
-The policy-score term is
-\begin{align}
-    \Sc_\mathrm{pol}^{\lambda,\theta,(b)} \coloneqq \sum_{t=0}^{T-1} \nabla_\theta \log p_t^\theta(\alpha_t^{\lambda,\theta,(b)} \mid X_t^{\lambda,\theta,(b)}, M_t^{\lambda,\theta,(b)}).
-\end{align}
-It is useful to isolate the ideal estimator, in which the exact population-flow sensitivity is available. Define
-\begin{align}
-    \Sc_\mathrm{pert}^{\lambda,\theta,(b)}
-    &\coloneqq
-    -\frac{1-\lambda}{\lambda}
-    \sum_{t=0}^T\sum_{k=1}^{N-1}
-    H_k(q_t^{(b)})D_t^\theta(k),\\
-    \Sc^{\lambda,\theta,(b)}
-    &\coloneqq
-    \Sc_\mathrm{pol}^{\lambda,\theta,(b)}
-    +
-    \Sc_\mathrm{pert}^{\lambda,\theta,(b)}.
-\end{align}
-The corresponding exact-sensitivity, or oracle, Monte Carlo estimator is
-\begin{align}
-    G_{\lambda,B}(\theta)
+    \widehat\Sc_{\mathrm{pert}}^{\lambda,\eta,n,\theta,(b)}
     \coloneqq
-    \frac1B
-    \sum_{b=1}^B
-    \left(\Rc_\theta^{\lambda,(b)}-b_0\right)
-    \Sc^{\lambda,\theta,(b)}.
+    -\frac{1-\lambda}{\lambda}\sum_{t=0}^T\sum_{k=1}^{N-1}H_k(q_t^{(b)})\,\widehat D_t^{\eta,n,\theta}(k),
 \end{align}
-By Theorem~\ref{theorem:discrete-policy-gradient-formula} and the baseline identity, $G_{\lambda,B}(\theta)$ is exactly unbiased for $\nabla_\theta J^\lambda(\theta)$. This estimator is not model-free, since it assumes access to the exact sensitivities $D_t^\theta(k)$, but it is a useful oracle reference: it isolates the effect of the transport perturbation from the additional error caused by estimating the mean-field derivative.
-The perturbation-score term is estimated by
+the transport policy-gradient estimator is
 \begin{align}
-    \widehat \Sc_\mathrm{pert}^{\lambda,\eta,n,\theta,(b)} \coloneqq -\frac{1-\lambda}{\lambda} \sum_{t=0}^T \sum_{k=1}^{N-1} H_k(q_t^{(b)}) \widehat D_t^{\eta,n,\theta}(k).
+    \widehat G_{\lambda,\eta,B,n}(\theta)
+    \coloneqq
+    \frac1B\sum_{b=1}^B\left(\Rc_\theta^{\lambda,(b)}-b_0\right)
+    \left(\Sc_{\mathrm{pol}}^{\lambda,\theta,(b)}+\widehat\Sc_{\mathrm{pert}}^{\lambda,\eta,n,\theta,(b)}\right).
+    \label{eq:discrete-transport-estimator}
 \end{align}
-Thus the estimated total score is $\widehat \Sc^{\lambda,\eta,n,\theta,(b)} \coloneqq \Sc_\mathrm{pol}^{\lambda,\theta,(b)} + \widehat \Sc_\mathrm{pert}^{\lambda, \eta,n,\theta,(b)}$. For a deterministic baseline $b_0\in\R$, define the Monte Carlo estimator
-\begin{align}
-    \widehat G_{\lambda,\eta,B,n}(\theta) \coloneqq \frac1B\sum_{b=1}^B\left(\Rc_\theta^{\lambda,(b)}-b_0\right)\widehat \Sc^{\lambda,\eta,n,\theta,(b)}.
-\end{align}
-The role of the baseline is only variance reduction: when the exact score is used it does not change the expectation, and in the plug-in estimator it only multiplies the same score approximation.
-
-\subsection{Bias and mean-square error decomposition}
+Replacing $\widehat D^{\eta,n,\theta}$ by the exact sensitivities defines the oracle estimator $G_{\lambda,B}(\theta)$, which is not implementable but is exactly unbiased for $\nabla_\theta J^\lambda(\theta)$ and separates the effect of the transport perturbation from the error of estimating the mean-field derivative. The baseline plays no role beyond variance reduction. Appendix~\ref{appendix:discrete-estimator} gives the auxiliary process, the derivation of the sensitivity identity, and the full definitions; Chapter~\ref{chapter:algorithms} gives the resulting algorithms.
 
 The oracle estimator $G_{\lambda,B}$ only contains the perturbation bias and the ordinary Monte Carlo variance. The practical estimator $\widehat G_{\lambda,\eta,B,n}$ adds a third source of error: the auxiliary error made when $D_t^\theta$ is replaced by $\widehat D_t^{\eta,n,\theta}$.
 
@@ -678,9 +460,7 @@ The oracle estimator $G_{\lambda,B}$ only contains the perturbation bias and the
     \end{align}
 \end{proposition}
 
-\begin{proof}
-    The exact unbiasedness follows from Theorem~\ref{theorem:discrete-policy-gradient-formula} and the baseline identity. The second estimate is the variance of an average of $B$ independent oracle-score samples, bounded by the score moment assumption. The comparison with $\nabla_\theta J(\theta)$ then follows by adding and subtracting $\nabla_\theta J^\lambda(\theta)$ and using the gradient convergence estimate of Theorem~\ref{theorem:discrete-gradient-convergence}.
-\end{proof}
+Unbiasedness is Theorem~\ref{theorem:discrete-policy-gradient-formula} together with the baseline identity, and the error bound combines the variance of a $B$-sample average with the gradient convergence estimate; see Appendix~\ref{appendix:discrete-mse-proofs}.
 
 \begin{proposition}[Auxiliary sensitivity error]
     \label{prop:auxiliary-sensitivity-error}
@@ -696,34 +476,9 @@ The oracle estimator $G_{\lambda,B}$ only contains the perturbation bias and the
     \end{align}
 \end{proposition}
 
-\begin{proof}
-    The auxiliary identity targets the derivative of the $\eta$-perturbed marginal, so the deterministic bias is $O(\eta)$ by Theorem~\ref{theorem:discrete-gradient-convergence}. For fixed previous sensitivities, the auxiliary estimator is an average of $n$ independent likelihood-ratio variables whose score has second moment of order $1+\eta^{-2}$, hence variance $O((n\eta^2)^{-1})$. The recursive use of $\widehat D_s^{\eta,n,\theta}$ for $s<t$ propagates these errors only through a finite triangular system. An induction over $t$ gives the stated bound.
-\end{proof}
+The two terms are the $O(\eta)$ bias of the $\eta$-perturbed target and the $O((n\eta^2)^{-1})$ variance of an $n$-sample likelihood-ratio average, propagated through the recursion by induction on $t$; see Appendix~\ref{appendix:discrete-mse-proofs}.
 
-To state the full decomposition, define the main-batch coefficients
-\begin{align}
-    A_{t,k}^{\lambda,B}(\theta)
-    \coloneqq
-    \frac1B\sum_{b=1}^B
-    \left(\Rc_\theta^{\lambda,(b)}-b_0\right)
-    H_k(q_t^{(b)}),
-    \qquad
-    a_{t,k}^{\lambda}(\theta)
-    \coloneqq
-    \E[A_{t,k}^{\lambda,1}(\theta)].
-\end{align}
-Then the plug-in estimator differs from the exact-sensitivity estimator by
-\begin{align}
-    \widehat G_{\lambda,\eta,B,n}(\theta)-G_{\lambda,B}(\theta)
-    =
-    -\frac{1-\lambda}{\lambda}
-    \sum_{t=0}^T\sum_{k=1}^{N-1}
-    A_{t,k}^{\lambda,B}(\theta)
-    \left(
-        \widehat D_t^{\eta,n,\theta}(k)-D_t^\theta(k)
-    \right).
-\end{align}
-This identity makes explicit where the factor $1/\lambda$ enters the error.
+The full decomposition is stated through the main-batch coefficients $A_{t,k}^{\lambda,B}(\theta)$, the empirical average of the perturbed return against the perturbation score at coordinate $k$ and time $t$, and their population counterparts $a_{t,k}^\lambda(\theta)$; both are defined in Appendix~\ref{appendix:discrete-mse-proofs}.
 
 \begin{theorem}[Bias and mean-square error]
     \label{theorem:discrete-mse-decomposition}
@@ -760,48 +515,12 @@ This identity makes explicit where the factor $1/\lambda$ enters the error.
     \end{align}
 \end{theorem}
 
-\begin{proof}
-    Let $\bar G_{\lambda,\eta,n}(\theta)\coloneqq\E[\widehat G_{\lambda,\eta,B,n}(\theta)\mid \widehat D^{\eta,n,\theta}]$, where the expectation is only over the main batch. By independence of the main and auxiliary batches,
-    \begin{align}
-        \bar G_{\lambda,\eta,n}(\theta)
-        =
-        \nabla_\theta J^\lambda(\theta)
-        -
-        \frac{1-\lambda}{\lambda}
-        \sum_{t=0}^T\sum_{k=1}^{N-1}
-        a_{t,k}^{\lambda}(\theta)
-        \left(
-            \widehat D_t^{\eta,n,\theta}(k)-D_t^\theta(k)
-        \right).
-    \end{align}
-    Combining this identity with Theorem~\ref{theorem:discrete-gradient-convergence} and Proposition~\ref{prop:auxiliary-sensitivity-error} gives the bias bound.
-
-    For the mean-square error, use the conditional variance decomposition
-    \begin{align}
-        \E\left[
-            \left\|
-                \widehat G_{\lambda,\eta,B,n}(\theta)-\nabla_\theta J(\theta)
-            \right\|^2
-        \right]
-        =
-        \E\left[
-            \left\|
-                \widehat G_{\lambda,\eta,B,n}(\theta)-\bar G_{\lambda,\eta,n}(\theta)
-            \right\|^2
-        \right]
-        +
-        \E\left[
-            \left\|
-                \bar G_{\lambda,\eta,n}(\theta)-\nabla_\theta J(\theta)
-            \right\|^2
-        \right].
-    \end{align}
-    The first term is the variance of an average of $B$ independent main-batch samples, and the score moment assumption bounds it by $C_T(1+\lambda^{-2})/B$. The second term is bounded by the square of the perturbation bias plus the auxiliary plug-in error, which gives $C_T\lambda^2+C_T\lambda^{-2}(\eta^2+(n\eta^2)^{-1})$.
-\end{proof}
+The proof conditions on the auxiliary batch, which isolates the plug-in error of the estimated sensitivities, and then applies the conditional variance decomposition; see Appendix~\ref{appendix:discrete-mse-proofs}.
 
 The bound displays the usual tuning tradeoff. Decreasing $\lambda$ reduces the deterministic perturbation bias, but increases both the variance of the perturbation score and the amplification of the auxiliary sensitivity error. The auxiliary radius $\eta$ has the same structure: small $\eta$ reduces the bias of the sensitivity target, while the likelihood-ratio variance grows like $\eta^{-2}$.
 
 \section{Continuous-state space}
+\label{sec:continuous-state-space}
 
 \subsection{Gaussian-mixture representation and perturbation of the population law}
 \label{subsec:continuous-gmm-perturbation}
@@ -812,14 +531,14 @@ The main difference with the finite-state setting is that $\mu_t^\theta$ is now 
 
 Fix an integer $K\geq1$. We consider the family of $K$-component Gaussian mixtures
 \begin{align}
-    \Gc_K\coloneqq \left\{\sum_{k=1}^{K} w_k\Nc(m_l,\Sigma_k) : w\in\Delta_K^\circ,\;m_k\in\R^d,\;\Sigma_k\in\S_{++}^d \right\},
+    \Gc_K\coloneqq \left\{\sum_{k=1}^{K} w_k\Nc(m_k,\Sigma_k) : w\in\Delta_K^\circ,\;m_k\in\R^d,\;\Sigma_k\in\S_{++}^d \right\},
 \end{align}
 where $\Delta_K^\circ$ denotes the relative interior of the $K$-dimensional probability simplex and $\mathbb S_{++}^d$ the set of symmetric positive-definite $d\times d$ matrices.
 
 To perturb elements of $\Gc_K$ while automatically preserving the constraints on the weights and covariance matrices, we work in unconstrained Euclidean coordinates. Let $q_K\coloneqq (K-1) + Kd + K\frac{d(d+1)}{2}$. For $z=\left(\beta,m_1,\ldots,m_K,s_1,\ldots,s_K \right)\in\R^{q_K}$, with $\beta\in\R^{K-1}$, define the mixture weights by the logistic parametrization
 \begin{align}
     w_k(\beta) &= \frac{\exp(\beta_k)}{1 + \sum_{j=1}^{K-1}\exp(\beta_j)},\qquad k=1,\ldots,K-1,\\
-    w_K(\beta) &= \frac{1}{1+\sum_{k=1}^{K-1} \exp(\beta_j)}.
+    w_K(\beta) &= \frac{1}{1+\sum_{j=1}^{K-1} \exp(\beta_j)}.
 \end{align}
 For each $k$, the vector $s_k\in\R^{d(d+1)/2}$ parametrizes a lower-triangular matrix $L(s_k)$ whose diagonal entries are exponentials of the corresponding diagonal coordinates of $s_k$. We then set $\Sigma(s_k)\coloneqq L(s_k)L(s_k)^\top\in\S_{++}^d$. This defines a smooth decoder
 \begin{align}
@@ -830,29 +549,14 @@ For each $k$, the vector $s_k\in\R^{d(d+1)/2}$ parametrizes a lower-triangular m
 The map $\Gamma_K$ transforms arbitrary Euclidean parameters into a valid probability measure. This plays the same role as the softmax map in the finite-state construction: perturbations can be performed in an unconstrained Euclidean space and subsequently mapped back to the space of admissible probability measures.
 
 \paragraph{Finite-dimensional representation of the population flow.}
-
-We introduce a measurable representation map $\Rc_K:\Pc_1(\R^d)\to\R^{q_K}$, and define
-\begin{align}
-    \label{eq:gmm-projected-law}
-    z_{K,t}^\theta &\coloneqq \Rc_K(\mu_t^\theta),\qquad
-    \bar\mu_{K,t}^\theta&\coloneqq\Gamma_K(z_{K,t}^\theta).
-\end{align}
-The measure $\bar\mu_{K,t}^\theta$ is the $K$-component Gaussian-mixture representation of the true population law $\mu_t^\theta$.
-
-At this stage, $\Rc_K$ is kept abstract. It may correspond, for instance, to a population-level Gaussian-mixture fitting procedure. In the numerical implementation it will be replaced by an estimator based on particles sampled from $\mu_t^\theta$. The precise statistical procedure used to construct $\Rc_K$ is conceptually separate from the policy-gradient argument.
-
-For a metric $d_{\Pc}$ on $\Pc_1(\R^d)$, define the representation error
+Let $\Rc_K:\Pc_1(\R^d)\to\R^{q_K}$ be a measurable representation map, and set $z_{K,t}^\theta\coloneqq\Rc_K(\mu_t^\theta)$ and $\bar\mu_{K,t}^\theta\coloneqq\Gamma_K(z_{K,t}^\theta)$, the $K$-component mixture representation of the true population law. The map $\Rc_K$ is kept abstract; it may be a population-level mixture fitting procedure, and in the implementation it is replaced by an estimator built from particles sampled from $\mu_t^\theta$. The statistical procedure that constructs it is conceptually separate from the policy-gradient argument. For a metric $d_\Pc$ on $\Pc_1(\R^d)$, the representation error is
 \begin{align}
     \label{eq:gmm-representation-error}
     \delta_{K,t}^\theta\coloneqq d_\Pc \left( \mu_t^\theta,\bar\mu_{K,t}^\theta\right),\qquad \delta_K^\theta\coloneqq\max_{t\in\Tc}\delta_{K,t}^\theta.
 \end{align}
-Unlike the finite-state parametrization, this error is generally non-zero for fixed $K$. It constitutes an additional approximation error that is independent of the perturbation scale introduced below.
+Unlike in the finite-state parametrization this error is generally non-zero at fixed $K$, and it is independent of the perturbation scale introduced below. It vanishes when $\mu_t^\theta\in\Gc_K$ and $\Rc_K$ is exact; in particular the Gaussian setting is the case $K=1$, so the linear--quadratic model of Chapter~\ref{chapter:experiments} is an exact finite-dimensional subcase of the construction.
 
-When $\mu_t^\theta\in\Gc_K$ and the representation map is exact, we have $\bar\mu_{K,t}^\theta=\mu_t^\theta$ with $\delta_{K,t}^\theta=0$. In particular, the Gaussian setting corresponds to the special case $K=1$. Thus the Gaussian linear--quadratic model studied in Chapter~\ref{chapter:experiments} is recovered as an exact finite-dimensional subcase of the present construction.
-
-\begin{remark}[Identifiability of the mixture representation]
-    The decoder $\Gamma_K$ is not injective because permutations of the mixture components represent the same probability measure. We therefore assume that $\Rc_K$ selects a deterministic representative, for example through a fixed component-ordering convention. For the differentiation arguments below, we additionally restrict attention to non-degenerate representations, with mixture weights bounded away from zero and covariance matrices uniformly positive definite. These conditions prevent label collisions and singular components along the population flow.
-\end{remark}
+Two conventions are in force throughout. Since $\Gamma_K$ is not injective under permutations of the components, we assume that $\Rc_K$ selects a deterministic representative, for instance through a fixed component ordering; and for the differentiation arguments below we restrict attention to non-degenerate representations, with mixture weights bounded away from zero and covariance matrices uniformly positive definite, which prevents label collisions and singular components along the population flow.
 
 \paragraph{Random perturbation of the Gaussian-mixture coordinates.}
 Let $(U_t)_{t\in\Tc}$ be i.i.d.\ $\R^{q_K}$-valued random variables, independent of the state and policy noises, with common distribution $\nu$ admitting a density $\rho$ with respect to Lebesgue measure. For $\lambda>0$, define the randomized mixture parameter
@@ -867,33 +571,18 @@ and the corresponding randomized population law
 \end{align}
 By construction, $M_{K,t}^{\lambda,\theta}\in\Gc_K\subset\Pc_1(\R^d)$ almost surely. Moreover, $M_{K,t}^{0,\theta} = \bar\mu_{K,t}^\theta$.
 
-It is important to distinguish the three objects $\mu_t^\theta$, $\bar\mu_{K,t}^\theta$, and $M_{K,t}^{\lambda,\theta}$. The first is the true population law of the unperturbed controlled process. The second is its deterministic finite-dimensional Gaussian-mixture representation. The third is the randomized population argument used to construct the perturbed control problem. In particular, $M_{K,t}^{\lambda,\theta}$ should not be identified with the law of the perturbed state process defined below.
-
-We now define the perturbed controlled process by replacing the population argument in the policy and transition kernel with $M_{K,t}^{\lambda,\theta}$:
+The three objects must be kept apart: $\mu_t^\theta$ is the true population law, $\bar\mu_{K,t}^\theta$ its deterministic finite-dimensional representation, and $M_{K,t}^{\lambda,\theta}$ the randomized argument used to build the perturbed problem; the last is not the law of the perturbed state process defined next. That process replaces the population argument in the policy and the transition kernel by $M_{K,t}^{\lambda,\theta}$,
 \begin{align}
     \label{eq:gmm-perturbed-process}
     \begin{cases}
         X_0^{K,\lambda,\theta}\sim\mu_0,\\
         \alpha_t^{K,\lambda,\theta}\sim\pi_t^\theta\left(\cdot\mid X_t^{K,\lambda,\theta},M_t^{K,\lambda,\theta}\right),\\
-        X_{t+1}^{K,\lambda,\theta} \sim P_t\left(\cdot\mid X_t^{K,\lambda,\theta},M_{K,t}^{\lambda,\theta}, \alpha_t^{K,\lambda,\theta}\right),\qquad t=0,\ldots,T-1.
+        X_{t+1}^{K,\lambda,\theta} \sim P_t\left(\cdot\mid X_t^{K,\lambda,\theta},M_{K,t}^{\lambda,\theta}, \alpha_t^{K,\lambda,\theta}\right),\qquad t=0,\ldots,T-1,
     \end{cases}
 \end{align}
-The corresponding objective is
-\begin{align}
-    \label{eq:gmm-perturbed-objective}
-    J_K^\lambda(\theta)\coloneqq\E\left[\sum_{t=0}^{T-1}r_t\left(X_t^{K,\lambda,\theta}, M_{K,t}^{\lambda,\theta},\alpha_t^{K,\lambda,\theta}\right) + g\left(X_T^{K,\lambda,\theta}, M_{K,T}^{\lambda,\theta}\right) \right],
-\end{align}
-where the expectation is taken over the mixture perturbations, the state process, and the randomized actions.
+and its objective $J_K^\lambda(\theta)$ is \eqref{eq:methodology-equivalent_control} evaluated along that process, the expectation running over the mixture perturbations, the state process and the randomized actions.
 
-For fixed $K$, sending $\lambda$ to zero removes the random perturbation but does not remove the finite-dimensional representation error. Consequently, the limit $\lambda\downarrow0$ should first be compared with the objective obtained from the deterministic represented population flow $(\bar\mu_{K,t}^\theta)_{t\in\Tc}$. Recovery of the original continuous-state MFC objective additionally requires the representation error $\delta_K^\theta$ to vanish as $K$ increases.
-
-This gives two distinct approximation scales:
-\begin{align}
-    \label{eq:gmm-two-approximation-scales}
-    \mu_t^\theta \xrightarrow[K\to\infty]{\text{representation}}\bar\mu_{K,t}^\theta,\qquad \bar\mu_{K,t}^\theta\xleftarrow[\lambda\downarrow0]{\text{perturbation}}M_{K,t}^{\lambda,\theta}.
-\end{align}
-
-The following elementary estimate makes this decomposition explicit.
+There are therefore two distinct approximation scales, $\mu_t^\theta\to\bar\mu_{K,t}^\theta$ as $K\to\infty$ and $M_{K,t}^{\lambda,\theta}\to\bar\mu_{K,t}^\theta$ as $\lambda\downarrow0$. At fixed $K$, sending $\lambda$ to zero removes the randomization but not the representation error, so recovering the original objective requires both limits. The following estimate makes the decomposition explicit.
 
 \begin{assumption}[Regularity of the Gaussian-mixture decoder]
     \label{ass:gmm-decoder-regularity}
@@ -919,168 +608,24 @@ This assumption is a local regularity condition on the finite-dimensional chart.
     \end{align}
 \end{theorem}
 
-\begin{proof}
-    By the triangle inequality,
-    \begin{align}
-        W_1\left(M_{K,t}^{\lambda,\theta},\mu_t^\theta \right)
-        &\leq W_1\left(M_{K,t}^{\lambda,\theta},\bar\mu_{K,t}^\theta\right) + W_1\left(\bar\mu_{K,t}^\theta,\mu_t^\theta\right)\\
-        &= W_1\left(\Gamma_K(z_{K,t}^\theta+\lambda U_t), \Gamma_K(z_{K,t}^\theta)\right) + \delta_{K,t}^\theta.
-    \end{align}
-    Taking expectations and applying Assumption~\ref{ass:gmm-decoder-regularity} gives
-    \begin{align}
-        \E\left[ W_1\left(M_{K,t}^{\lambda,\theta},\mu_t^\theta\right)\right]\leq C_{\Gamma,K}\lambda + \delta_{K,t}^\theta.
-    \end{align}
-    The second statement follows immediately.
-\end{proof}
+The bound is the triangle inequality applied through the decoder, followed by Assumption~\ref{ass:gmm-decoder-regularity}; see Appendix~\ref{appendix:gmm-perturbation-estimate}.
 
 The estimate \eqref{eq:gmm-total-law-error} is the continuous-state analogue of the simplex perturbation estimate obtained in the finite-state setting. There is, however, one additional term: $\delta_{K,t}^\theta$ measures the structural error caused by replacing an infinite-dimensional population law with a finite-dimensional Gaussian mixture. The subsequent convergence and policy-gradient analysis must therefore keep the limits in $K$ and $\lambda$ separate.
 
 Finally, the use of the Euclidean coordinates $Z_{K,t}^{\lambda,\theta}$ has an additional advantage. We do not need to construct a dominating measure or a density directly on the infinite-dimensional space $\Pc(\R^d)$. The likelihood-ratio correction can instead be derived from the ordinary finite-dimensional density of $Z_{K,t}^{\lambda,\theta} = z_{K,t}^\theta + \lambda U_t$.
 
-\subsection{Density and score of the randomized Gaussian-mixture parameters}
+\subsection{Density and score of the randomized coordinates}
 \label{subsec:gmm-density-score}
 
-We now derive the density and score associated with the randomized finite-dimensional population representation introduced in Section~\ref{subsec:continuous-gmm-perturbation}. The main advantage of the Gaussian-mixture parametrization is that the randomization is performed directly in the Euclidean coordinate space $\R^{q_K}$ rather than on the infinite-dimensional space $\Pc(\R^d)$.
-
-Recall that $Z_{K,t}^{\lambda,\theta} = z_{K,t}^{\theta} + \lambda U_t$ and $z_{K,t}^{\theta} = \Rc_K(\mu_t^\theta)$, where $(U_t)_{t\in\Tc}$ are i.i.d.\ $\R^{q_K}$-valued random variables with common density $\rho:\R^{q_K}\to\R_+$ with respect to Lebesgue measure. The randomized population argument is then $M_{K,t}^{\lambda,\theta} = \Gamma_K(Z_{K,t}^{\lambda,\theta})$.
-
-The dependence of the distribution of $Z_{K,t}^{\lambda,\theta}$ on $\theta$ is entirely induced by the translation $z_{K,t}^{\theta}$. This yields an explicit finite-dimensional likelihood-ratio correction.
-
-For $\lambda > 0$, define
+Because the randomization acts on the Euclidean coordinates rather than on $\Pc(\R^d)$, the likelihood-ratio correction is an ordinary finite-dimensional computation. Since $Z_{K,t}^{\lambda,\theta}=z_{K,t}^\theta+\lambda U_t$ with $U_t$ of density $\rho$, a change of variables gives the density $\varrho_{K,t}^{\lambda,\theta}(z)=\lambda^{-q_K}\rho\big((z-z_{K,t}^\theta)/\lambda\big)$, whose dependence on $\theta$ is carried entirely by the translation $z_{K,t}^\theta$. Differentiating it yields the score
 \begin{align}
-    \label{eq:gmm-coordinate-density}
-    \varrho_{K,t}^{\lambda,\theta}(z) \coloneqq \frac{1}{\lambda^{q_K}}\rho\left(\frac{z-z_{K,t}^\theta}{\lambda}\right),\qquad z\in\R^{q_K}.
+    \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}\left(Z_{K,t}^{\lambda,\theta}\right)
+    = -\frac{1}{\lambda}\left(D_\theta z_{K,t}^\theta\right)^\top\nabla\log\rho(U_t),
+    \label{eq:gmm-coordinate-score-sampled}
 \end{align}
+which for $U_t\sim\Nc(0,\Xi)$ becomes $\lambda^{-1}(D_\theta z_{K,t}^\theta)^\top\Xi^{-1}U_t$, and $\lambda^{-1}(D_\theta z_{K,t}^\theta)^\top U_t$ in the isotropic case. This is the direct continuous-state analogue of the perturbation-score term of the finite-state construction, and it depends on the unknown mean-field dynamics only through the population-flow sensitivity $D_\theta z_{K,t}^\theta=D_\theta\Rc_K(\mu_t^\theta)$, the counterpart of the gradient of the logits. The singular factor $\lambda^{-1}$ is again the source of the bias--variance trade-off. In practice the coordinates of the mixture representation have different scales, so a block-diagonal $\Xi$ over weight, mean and covariance coordinates is preferable, and the score formula stays explicit.
 
-\begin{proposition}[Density of the randomized mixture coordinates]
-    \label{prop:gmm-coordinate-density}
-    Let $\lambda>0$ and suppose that $U_t$ admits density $\rho$ with respect to Lebesgue measure on $\R^{q_K}$. Then $Z_{K,t}^{\lambda,\theta}$ admits density $\varrho_{K,t}^{\lambda,\theta}$ given by \eqref{eq:gmm-coordinate-density}. In particular,
-    \begin{align}
-        \Lc(Z_{K,t}^{\lambda,\theta})(\d z) = \varrho_{K,t}^{\lambda,\theta}(z)\d z.
-    \end{align}
-\end{proposition}
-
-\begin{proof}
-    For fixed $(t,K,\lambda,\theta)$, consider the affine map
-    \begin{align}
-        \Phi_{K,t}^{\lambda,\theta}:\R^{q_K} &\longrightarrow\R^{q_K},\\
-        u &\longmapsto z_{K,t}^\theta + \lambda u.
-    \end{align}
-    Its inverse is
-    \begin{align}
-        \left(\Phi_{K,t}^{\lambda,\theta}\right)^{-1}(z) = \frac{z-z_{K,t}^\theta}{\lambda},
-    \end{align}
-    and
-    \begin{align}
-        \left|\det D\left(\Phi_{K,t}^{\lambda,\theta}\right)^{-1}(z)\right| = \lambda^{-q_K}.
-    \end{align}
-    The change-of-variables formula therefore gives
-    \begin{align}
-        \varrho_{K,t}^{\lambda,\theta}(z) &= \rho\left(\left(\Phi_{K,t}^{\lambda,\theta}\right)^{-1}(z)\right)\left|\det D\left(\Phi_{K,t}^{\lambda,\theta}\right)^{-1}(z) \right| \\
-        &= \frac{1}{\lambda^{q_K}}\rho\left(\frac{z-z_{K,t}^{\theta}}{\lambda} \right).
-    \end{align}
-\end{proof}
-
-\begin{remark}[Why we work with $Z_{K,t}^{\lambda,\theta}$]
-    \label{rem:no-density-on-gmm-space}
-    We do not require the random measure $M_{K,t}^{\lambda,\theta} = \Gamma_K(Z_{K,t}^{\lambda,\theta})$ itself to admit a density with respect to a reference measure on $\Pc(\R^d)$ or even on $\Gc_K$.
-    
-    Indeed, because the Gaussian-mixture decoder $\Gamma_K$ is non-injective under permutations of the mixture components, constructing such a density directly on $\Gc_K$ would introduce unnecessary technical complications. Instead, we retain the Euclidean random variable $Z_{K,t}^{\lambda,\theta}$ as part of the augmented trajectory and evaluate the policy, transition kernel, and rewards through the decoded measure $\Gamma_K(Z_{K,t}^{\lambda,\theta})$.
-    
-    Thus, all likelihood-ratio calculations can be carried out with respect to ordinary Lebesgue measure on $\R^{q_K}$.
-\end{remark}
-
-Let the policy parameter satisfy $\theta\in\Theta\subset\R^{d_\theta}$, and suppose that $\theta\longmapsto z_{K,t}^\theta\in\R^{q_K}$ is differentiable. We denote its Jacobian by $D_\theta z_{K,t}^\theta\in\R^{q_K\times d_\theta}$.
-
-We now compute the score of the family of densities $\left(\varrho_{K,t}^{\lambda,\theta}\right)_{\theta\in\Theta}$.
-
-\begin{proposition}[Score of the randomized mixture coordinates]
-    \label{prop:gmm-coordinate-score}
-    Suppose that $\rho$ is strictly positive and continuously differentiable on $\R^{q_K}$ and that $\theta\mapsto z_{K,t}^{\theta}$ is differentiable. Then, for every $z\in\R^{q_K}$,
-    \begin{align}
-        \label{eq:gmm-coordinate-score-general}
-        \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}(z) = -\frac{1}{\lambda}\left(D_\theta z_{K,t}^\theta\right)^\top\nabla\log\rho\left(\frac{z-z_{K,t}^\theta}{\lambda}\right).
-    \end{align}
-    Consequently, evaluated at the sampled randomized coordinate $Z_{K,t}^{\lambda,\theta} = z_{K,t}^\theta + \lambda U_t$, we obtain
-    \begin{align}
-        \label{eq:gmm-coordinate-score-sampled}
-        \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}\left(Z_{K,t}^{\lambda,\theta}\right) = -\frac{1}{\lambda}\left(D_\theta z_{K,t}^\theta\right)^\top\nabla\log\rho(U_t).
-    \end{align}
-\end{proposition}
-
-\begin{proof}
-    From Proposition~\ref{prop:gmm-coordinate-density},
-    \begin{align}
-        \log\varrho_{K,t}^{\lambda,\theta}(z) = -q_K\log\lambda + \log\rho\left(\frac{z-z_{K,t}^\theta}{\lambda}\right).
-    \end{align}
-    For fixed $z$, the first term does not depend on $\theta$. By the chain rule,
-    \begin{align}
-        \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}(z)
-        &= \left[D_\theta\left(\frac{z-z_{K,t}^{\theta}}{\lambda}\right)\right]^\top \nabla\log\rho\left(\frac{z-z_{K,t}^\theta}{\lambda}\right)\\
-        &= -\frac{1}{\lambda}\left(D_\theta z_{K,t}^{\theta}\right)^\top \nabla\log\rho\left(\frac{z-z_{K,t}^\theta}{\lambda}\right).
-    \end{align}
-    Evaluating at $z=Z_{K,t}^{\lambda,\theta}=z_{K,t}^{\theta}+\lambda U_t$ gives \eqref{eq:gmm-coordinate-score-sampled}.
-\end{proof}
-
-The score therefore depends on the unknown mean-field dynamics only through the population-flow sensitivity $D_\theta z_{K,t}^{\theta} = D_\theta \Rc_K(\mu_t^\theta)$. This is the continuous-state counterpart of the gradient of the logits in the finite-state construction. A model-free estimator of $D_\theta z_{K,t}^{\theta}$ will be developed subsequently.
-
-A particularly convenient choice is to use Gaussian perturbations. Let $U_t\sim\Nc(0,\Xi)$ for $\Xi\in\S_{++}^{q_K}$, independently across $t$. Then
-\begin{align}
-    \rho(u)=\frac{1}{(2\pi)^{q_K/2} \det(\Xi)^{1/2}}\exp\left(-frac12 u^\top\Xi^{-1}u\right),
-\end{align}
-and therefore $\nabla\log\rho(u) = -\Xi^{-1}u$.
-
-Corollary~\ref{prop:gmm-coordinate-score} then becomes particularly simple.
-
-\begin{corollary}[Gaussian perturbation score]
-    \label{cor:gmm-gaussian-score}
-    Suppose that $U_t\sim\Nc(0,\Xi)$. Then
-    \begin{align}
-        \label{eq:gmm-gaussian-score}
-        \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}\left(Z_{K,t}^{\lambda,\theta}\right) = \frac1\lambda \left(D_\theta z_{K,t}^\theta\right)^\top \Xi^{-1}U_t.
-    \end{align}
-    In particular, for $U_t\sim\Nc(0,I_{q_K})$, we have
-    \begin{align}
-        \label{eq:gmm-isotropic-score}
-        \nabla_\theta\log\varrho_{K,t}^{\lambda,\theta}\left(Z_{K,t}^{\lambda,\theta}\right) = \frac1\lambda\left(D_\theta z_{K,t}^\theta\right)^\top U_t.
-    \end{align}
-\end{corollary}
-
-Equation~\eqref{eq:gmm-isotropic-score} is the direct continuous-state analogue of the perturbation-score term obtained in the finite-state setting. The singular factor $\lambda^{-1}$ is also the source of the familiar bias--variance trade-off: reducing $\lambda$ decreases the perturbation bias, while simultaneously amplifying the variance of likelihood-ratio estimators.
-
-\begin{remark}[Anisotropic perturbations]
-    \label{rem:gmm-anisotropic-noise}
-    Although the isotropic Gaussian choice is the simplest theoretically, the coordinates of the Gaussian-mixture representation have different geometries and scales. In particular, mixture logits, component means, and covariance coordinates need not respond similarly to perturbations.
-    
-    It can therefore be advantageous in practice to use a block-diagonal covariance $\Xi=\operatorname{diag}\left(\Xi_w,\Xi_m,\Xi_\Sigma\right)$, corresponding respectively to mixture-weight, mean, and covariance coordinates. The score formula \eqref{eq:gmm-gaussian-score} remains explicit in this case.
-\end{remark}
-
-The usual likelihood-ratio identities hold for the perturbation score. Define $S_{K,t}^{\lambda,\theta} \coloneqq \nabla_\theta \log \varrho_{K,t}^{\lambda,\theta} \left( Z_{K,t}^{\lambda,\theta} \right)$. Then, under the usual integrability assumptions, $\E \left[ S_{K,t}^{\lambda,\theta} \right] = 0$. Indeed,
-\begin{align}
-    \E \left[ S_{K,t}^{\lambda,\theta} \right] &= \int_{\R^{q_K}} \nabla_\theta \log \varrho_{K,t}^{\lambda,\theta}(z) \, \varrho_{K,t}^{\lambda,\theta}(z) \,dz \\ &= \int_{\R^{q_K}} \nabla_\theta \varrho_{K,t}^{\lambda,\theta}(z) \,dz \\ &= \nabla_\theta \int_{\R^{q_K}} \varrho_{K,t}^{\lambda,\theta}(z) \,dz = 0.
-\end{align}
-
-More generally, if $H:\R^{q_K}\to\R$ is sufficiently integrable and does not depend explicitly on $\theta$, then
-\begin{align}
-    \nabla_\theta \E \left[ H \left( Z_{K,t}^{\lambda,\theta} \right) \right] = \E \left[ H \left( Z_{K,t}^{\lambda,\theta} \right) S_{K,t}^{\lambda,\theta} \right].
-    \label{eq:gmm-likelihood-ratio-identity}
-\end{align}
-This identity is the mechanism by which derivatives of the population-dependent reward, policy, and transition kernel will be replaced by a model-free score term.
-
-\paragraph{Augmented formulation.}
-For later use, it is convenient to regard the randomized coordinate $Z_{K,t}^{\lambda,\theta}$ as an explicit component of the perturbed trajectory. Define
-\begin{align}
-    \widetilde r_{K,t}(x,a,z) &\coloneqq r_t \left( x, \Gamma_K(z), a \right), \\ \widetilde g_K(x,z) &\coloneqq g \left( x, \Gamma_K(z) \right), \\ \widetilde\pi_{K,t}^{\theta}(da\mid x,z) &\coloneqq \pi_t^\theta \left( da \mid x, \Gamma_K(z) \right), \\ \widetilde P_{K,t}(dx'\mid x,a,z) &\coloneqq P_t \left( dx' \mid x, a, \Gamma_K(z) \right).
-    \label{eq:gmm-augmented-coefficients}
-\end{align}
-
-The perturbed objective may therefore be written entirely on the finite-dimensional augmented space $\R^d \times \R^{q_K} \times \Ac$. The corresponding trajectory law takes the form
-\begin{align}
-    \mathbb P_{K,\lambda}^{\theta} &(dx_0,dz_0,da_0,\ldots, dx_{T-1},dz_{T-1},da_{T-1},dx_T,dz_T) \nonumber\\ &= \mu_0(dx_0) \prod_{t=0}^{T-1} \Big[ \varrho_{K,t}^{\lambda,\theta}(z_t)\,dz_t\, \widetilde\pi_{K,t}^{\theta}(da_t\mid x_t,z_t)\, \widetilde P_{K,t}(dx_{t+1}\mid x_t,a_t,z_t) \Big] \, \varrho_{K,T}^{\lambda,\theta}(z_T)\,dz_T.
-    \label{eq:gmm-augmented-trajectory-law}
-\end{align}
-
-This representation makes the key structural point explicit: after augmenting the trajectory by the randomized finite-dimensional coordinates $(Z_{K,t}^{\lambda,\theta})_{t\in\Tc}$, the dependence of the trajectory density on $\theta$ occurs through only two families of terms, $\widetilde\pi_{K,t}^{\theta}$ and $\varrho_{K,t}^{\lambda,\theta}$. In particular, the model transition kernel does not need to be differentiated. This observation will yield the model-free policy-gradient representation of the perturbed continuous-state control problem.
+The construction never requires the random measure $M_{K,t}^{\lambda,\theta}=\Gamma_K(Z_{K,t}^{\lambda,\theta})$ to admit a density on $\Pc(\R^d)$ or on $\Gc_K$, which would be awkward since $\Gamma_K$ is not injective under permutations; the Euclidean variable is retained as part of the augmented trajectory and every likelihood-ratio computation runs against Lebesgue measure on $\R^{q_K}$. Augmenting the trajectory by $(Z_{K,t}^{\lambda,\theta})_{t\in\Tc}$ makes the structural point explicit: the trajectory density depends on $\theta$ only through the policy and the perturbation density, so the transition kernel is never differentiated. Appendix~\ref{appendix:gmm-density-score-proofs} gives the two propositions, their proofs and the augmented formulation.
 
 \subsection{Convergence of the perturbed objective}
 \label{subsec:gmm-objective-convergence}
@@ -1096,36 +641,8 @@ where $J_K^0$ denotes the control problem obtained by replacing the population a
 
 The first term in \eqref{eq:gmm-objective-error-decomposition} is the perturbation error, whereas the second is the finite-dimensional representation error.
 
-\paragraph{Averaged controlled kernel and reward.}
-
-For $\theta\in\Theta$, define the averaged controlled transition kernel
-\begin{align}
-    \Kc_t^\theta\left( dx' \mid x,m \right) \coloneqq \int_{\Ac} P_t \left( dx' \mid x,a,m \right) \pi_t^\theta \left( da \mid x,m \right),
-    \label{eq:gmm-averaged-kernel}
-\end{align}
-and the averaged running reward
-\begin{align}
-    \Rc_t^\theta(x,m) \coloneqq \int_{\Ac} r_t(x,a,m) \pi_t^\theta \left( da \mid x,m \right).
-    \label{eq:gmm-averaged-reward}
-\end{align}
-
-The law $\mu_t^\theta$ of the original controlled process therefore satisfies
-\begin{align}
-    \mu_{t+1}^\theta = \int_{\R^d} \Kc_t^\theta \left( \cdot \mid x,\mu_t^\theta \right) \mu_t^\theta(dx).
-    \label{eq:gmm-original-flow}
-\end{align}
-
-We denote by $\nu_{K,t}^{\lambda,\theta} \coloneqq \Lc \left( X_t^{K,\lambda,\theta} \right)$ the law of the state process driven by the randomized population arguments $(M_{K,t}^{\lambda,\theta})_{t\in\Tc}$.
-
-Since $U_t$ is independent of the state and action randomness up to time $t$, the randomized measure $M_{K,t}^{\lambda,\theta}$ is independent of $X_t^{K,\lambda,\theta}$. Consequently,
-\begin{align}
-    \nu_{K,t+1}^{\lambda,\theta} = \E \left[ \Kc_t^\theta \left( \cdot \mid X_t^{K,\lambda,\theta}, M_{K,t}^{\lambda,\theta} \right) \right].
-    \label{eq:gmm-perturbed-flow}
-\end{align}
-
-When $\lambda=0$, we similarly denote $\nu_{K,t}^{0,\theta} = \Lc \left( X_t^{K,0,\theta} \right)$, where the population argument is the deterministic measure $\bar\mu_{K,t}^\theta$.
-
-Notice that, in general, $\nu_{K,t}^{0,\theta}\neq\bar\mu_{K,t}^\theta$. The latter is an approximation of the original population law $\mu_t^\theta$, whereas the former is the law of the state process obtained after using this approximation as an exogenous population argument.
+\paragraph{Averaged coefficients and the two error terms.}
+Both terms of \eqref{eq:gmm-objective-error-decomposition} are controlled by the same stability argument, carried out on the averaged controlled kernel $\Kc_t^\theta(\d x'\mid x,m)=\int_\Ac P_t(\d x'\mid x,a,m)\pi_t^\theta(\d a\mid x,m)$ and the averaged running reward $\Rc_t^\theta(x,m)=\int_\Ac r_t(x,a,m)\pi_t^\theta(\d a\mid x,m)$, which are the coefficients that drive the population recursion. Writing $\nu_{K,t}^{\lambda,\theta}=\Lc(X_t^{K,\lambda,\theta})$ for the law of the perturbed state process, and $\nu_{K,t}^{0,\theta}$ for its counterpart at $\lambda=0$, the independence of $U_t$ from the state and action noises up to time $t$ gives the recursion $\nu_{K,t+1}^{\lambda,\theta}=\E[\Kc_t^\theta(\cdot\mid X_t^{K,\lambda,\theta},M_{K,t}^{\lambda,\theta})]$. Note that $\nu_{K,t}^{0,\theta}\neq\bar\mu_{K,t}^\theta$ in general: the second is an approximation of the population law, the first is the law of the state process obtained by using that approximation as an exogenous population argument.
 
 \begin{assumption}[Wasserstein stability of the controlled dynamics]
     \label{ass:gmm-objective-stability}
@@ -1138,122 +655,14 @@ Notice that, in general, $\nu_{K,t}^{0,\theta}\neq\bar\mu_{K,t}^\theta$. The lat
     We further assume the moment conditions required for all the Wasserstein distances and expectations below to be finite.
 \end{assumption}
 
-\begin{remark}[Primitive sufficient conditions]
-    Assumption~\ref{ass:gmm-objective-stability} is formulated directly in terms of the averaged controlled coefficients because these are the quantities entering the population recursion. It can be verified from primitive Lipschitz assumptions on $P_t$, $\pi_t^\theta$, and $r_t$.
-    
-    For instance, sufficient conditions for \eqref{eq:gmm-kernel-lipschitz} can be obtained by combining Wasserstein regularity of $(x,m) \longmapsto P_t(\cdot\mid x,a,m)$ uniformly in $a$, with suitable regularity of the randomized policy $(x,m) \longmapsto \pi_t^\theta(\cdot\mid x,m)$. We work directly with $\Kc_t^\theta$ and $\Rc_t^\theta$ in order to keep the stability argument independent of the particular action-space parametrization.
-\end{remark}
+It is stated directly in terms of the averaged coefficients because these are the quantities entering the population recursion; it follows from Wasserstein regularity of $(x,m)\mapsto P_t(\cdot\mid x,a,m)$ uniformly in $a$ together with regularity of the randomized policy, and working with $\Kc_t^\theta$ and $\Rc_t^\theta$ keeps the argument independent of the action-space parametrization.
 
-We first record a general stability estimate that will be used both for the perturbation error and for the Gaussian-mixture representation error.
-
-Let $(m_t)_{t\in\Tc}$ and $(\widetilde m_t)_{t\in\Tc}$ be two possibly random population-argument flows, independent of the corresponding state noises at the current time. Let $(Y_t)$ and $(\widetilde Y_t)$ be controlled processes driven by the same policy parameter $\theta$ and by $m_t$ and $\widetilde m_t$, respectively. Denote $\eta_t=\Lc(Y_t), \qquad \widetilde\eta_t=\Lc(\widetilde Y_t)$, and set $d_t\coloneqq\E\left[W_1(m_t,\widetilde m_t)\right]$.
-
-\begin{lemma}[Stability of the state marginal]
-    \label{lem:gmm-state-stability}
-    Under Assumption~\ref{ass:gmm-objective-stability}, if $\eta_0=\widetilde\eta_0=\mu_0$, then
-    \begin{align}
-        W_1(\eta_t,\widetilde\eta_t) \leq L_{\Kc,\mu} \sum_{s=0}^{t-1} L_{\Kc,x}^{\,t-1-s} d_s, \qquad t=1,\ldots,T.
-        \label{eq:gmm-state-stability}
-    \end{align}
-\end{lemma}
-
-\begin{proof}
-    We proceed recursively. Since both processes have the same initial law, $W_1(\eta_0,\widetilde\eta_0)=0$.
-
-    Let $e_t\coloneqq W_1(\eta_t,\widetilde\eta_t)$. Choose a coupling $(Y_t,\widetilde Y_t)$ such that $\E\left[|Y_t-\widetilde Y_t|\right]=e_t$. Conditionally on $(Y_t,\widetilde Y_t,m_t,\widetilde m_t)$, couple the next states through an optimal coupling of the two controlled transition kernels. By \eqref{eq:gmm-kernel-lipschitz},
-    \begin{align}
-        \label{eq:gmm-state-recursion}
-        e_{t+1}&\leq\E\left[W_1\left(\Kc_t^\theta(\cdot\mid Y_t,m_t),\Kc_t^\theta(\cdot\mid \widetilde Y_t,\widetilde m_t)\right)\right]\\
-        &\leq L_{\Kc,x}\E\left[|Y_t-\widetilde Y_t|\right] +L_{\Kc,\mu}\E\left[W_1(m_t,\widetilde m_t)\right]\\
-        &= L_{\Kc,x}e_t + L_{\Kc,\mu}d_t.
-    \end{align}
-    Iterating \eqref{eq:gmm-state-recursion} from $e_0=0$ gives \eqref{eq:gmm-state-stability}.
-\end{proof}
-
-For convenience, define
+Under this assumption, a single Wasserstein stability estimate for the state marginal, applied twice, bounds the two terms of \eqref{eq:gmm-objective-error-decomposition} separately: the perturbation error by $C_TC_{\Gamma,K}\lambda$ and the representation error by $C_T\delta_K^\theta$, with
 \begin{align}
-    H_t(L) \coloneqq
-    \begin{cases}
-        0, &t=0, \\ \displaystyle \sum_{j=0}^{t-1}L^j, &t\geq1.
-    \end{cases}
-    \label{eq:gmm-geometric-factor}
+    C_T \coloneqq \sum_{t=0}^{T-1} \left[ L_{\Rc,x} L_{\Kc,\mu} H_t(L_{\Kc,x}) + L_{\Rc,\mu} \right] + L_{g,x} L_{\Kc,\mu} H_T(L_{\Kc,x}) + L_{g,\mu},
+    \label{eq:gmm-objective-stability-constant}
 \end{align}
-Thus, if $d_s\leq d$ uniformly over $s$, Lemma~\ref{lem:gmm-state-stability} gives $W_1(\eta_t,\widetilde\eta_t) \leq L_{\Kc,\mu} H_t(L_{\Kc,x})d$.
-
-Recall that $M_{K,t}^{\lambda,\theta} = \Gamma_K \left( z_{K,t}^\theta+\lambda U_t \right)$ and $\bar\mu_{K,t}^\theta = \Gamma_K(z_{K,t}^\theta)$. Under Assumption~\ref{ass:gmm-decoder-regularity},
-\begin{align}
-    \E \left[ W_1 \left( M_{K,t}^{\lambda,\theta}, \bar\mu_{K,t}^\theta \right) \right] \leq C_{\Gamma,K}\lambda.
-    \label{eq:gmm-perturbation-distance-recall}
-\end{align}
-
-Applying Lemma~\ref{lem:gmm-state-stability} with $m_t=M_{K,t}^{\lambda,\theta}$, and $\widetilde m_t=\bar\mu_{K,t}^\theta$, gives
-\begin{align}
-    W_1 \left( \nu_{K,t}^{\lambda,\theta}, \nu_{K,t}^{0,\theta} \right) \leq L_{\Kc,\mu} H_t(L_{\Kc,x}) C_{\Gamma,K}\lambda.
-    \label{eq:gmm-perturbed-state-to-unperturbed-gmm}
-\end{align}
-
-We can now control the objective.
-\begin{proposition}[Perturbation error]
-    \label{prop:gmm-perturbation-objective}
-    Under Assumptions~\ref{ass:gmm-decoder-regularity} and \ref{ass:gmm-objective-stability}, for every fixed $K$, $\theta\in\Theta$, and $\lambda\in[0,\lambda_0]$,
-    \begin{align}
-        \left| J_K^\lambda(\theta) - J_K^0(\theta) \right| \leq C_T C_{\Gamma,K}\lambda, \label{eq:gmm-perturbation-objective-bound}
-    \end{align}
-    where
-    \begin{align}
-        C_T \coloneqq \sum_{t=0}^{T-1} \left[ L_{\Rc,x} L_{\Kc,\mu} H_t(L_{\Kc,x}) + L_{\Rc,\mu} \right] + L_{g,x} L_{\Kc,\mu} H_T(L_{\Kc,x}) + L_{g,\mu}.
-        \label{eq:gmm-objective-stability-constant}
-    \end{align}
-    Consequently, for fixed $K$,
-    \begin{align}
-        J_K^\lambda(\theta) \xrightarrow[\lambda\downarrow0]{} J_K^0(\theta).
-    \end{align}
-\end{proposition}
-
-\begin{proof}
-    For each running reward, using \eqref{eq:gmm-reward-lipschitz},
-    \begin{align}
-        & \left| \E \left[ \Rc_t^\theta \left( X_t^{K,\lambda,\theta}, M_{K,t}^{\lambda,\theta} \right) \right] - \E \left[ \Rc_t^\theta \left( X_t^{K,0,\theta}, \bar\mu_{K,t}^\theta \right) \right] \right| \nonumber\\
-        &\qquad\leq L_{\Rc,x} W_1 \left( \nu_{K,t}^{\lambda,\theta}, \nu_{K,t}^{0,\theta} \right) + L_{\Rc,\mu} \E \left[ W_1 \left( M_{K,t}^{\lambda,\theta}, \bar\mu_{K,t}^\theta \right) \right].
-    \end{align}
-    Using \eqref{eq:gmm-perturbed-state-to-unperturbed-gmm} and \eqref{eq:gmm-perturbation-distance-recall}, this is bounded by
-    \begin{align}
-        \left[ L_{\Rc,x} L_{\Kc,\mu} H_t(L_{\Kc,x}) + L_{\Rc,\mu} \right] C_{\Gamma,K}\lambda.
-    \end{align}
-    
-    Similarly, the terminal reward satisfies
-    \begin{align}
-        & \left| \E \left[ g \left( X_T^{K,\lambda,\theta}, M_{K,T}^{\lambda,\theta} \right) \right] - \E \left[ g \left( X_T^{K,0,\theta}, \bar\mu_{K,T}^\theta \right) \right] \right| \\
-        &\qquad\leq \left[ L_{g,x} L_{\Kc,\mu} H_T(L_{\Kc,x}) + L_{g,\mu} \right] C_{\Gamma,K}\lambda.
-    \end{align}
-    Summing over time gives \eqref{eq:gmm-perturbation-objective-bound}.
-\end{proof}
-
-We now compare $J_K^0$ with the original objective $J$. Recall that $\delta_{K,t}^\theta = W_1 \left( \bar\mu_{K,t}^\theta, \mu_t^\theta \right)$, and $\delta_K^\theta = \max_{t\in\Tc} \delta_{K,t}^\theta$. Applying Lemma~\ref{lem:gmm-state-stability} with $m_t=\bar\mu_{K,t}^\theta$ and $\widetilde m_t=\mu_t^\theta$, we obtain
-\begin{align}
-    W_1 \left( \nu_{K,t}^{0,\theta}, \mu_t^\theta \right) \leq L_{\Kc,\mu} H_t(L_{\Kc,x}) \delta_K^\theta.
-    \label{eq:gmm-representation-state-error}
-\end{align}
-
-\begin{proposition}[Representation error]
-    \label{prop:gmm-representation-objective}
-    Under Assumption~\ref{ass:gmm-objective-stability},
-    \begin{align}
-        \left| J_K^0(\theta) - J(\theta) \right| \leq C_T\delta_K^\theta,
-        \label{eq:gmm-representation-objective-bound}
-    \end{align} where $C_T$ is given by \eqref{eq:gmm-objective-stability-constant}.
-\end{proposition}
-
-\begin{proof}
-    The proof is identical to that of Proposition~\ref{prop:gmm-perturbation-objective}, replacing $M_{K,t}^{\lambda,\theta}$ by $\bar\mu_{K,t}^\theta$ and $\bar\mu_{K,t}^\theta$ by $\mu_t^\theta$.
-
-    In particular,
-    \begin{align}
-        & \left| \E \left[ \Rc_t^\theta \left( X_t^{K,0,\theta}, \bar\mu_{K,t}^\theta \right) \right] - \E \left[ \Rc_t^\theta \left( X_t^\theta, \mu_t^\theta \right) \right] \right| \\
-        &\qquad\leq \left[ L_{\Rc,x} L_{\Kc,\mu} H_t(L_{\Kc,x}) + L_{\Rc,\mu} \right] \delta_K^\theta.
-    \end{align}
-    The analogous bound for the terminal reward and summation over time yield \eqref{eq:gmm-representation-objective-bound}.
-\end{proof}
+where $H_t(L)=\sum_{j=0}^{t-1}L^j$ for $t\geq1$ and $H_0(L)=0$. Appendix~\ref{appendix:gmm-objective-convergence-proofs} states the stability lemma and the two intermediate propositions, and proves them. Adding the two estimates gives the main result of this subsection.
 
 Combining the two preceding propositions gives the main result of this subsection.
 
@@ -1281,21 +690,9 @@ Combining the two preceding propositions gives the main result of this subsectio
     \end{align}
 \end{theorem}
 
-\begin{remark}[Order of the two limits]
-    For fixed $K$, taking $\lambda\downarrow0$ only removes the artificial randomization. It does not recover the original MFC problem unless the true population flow belongs to the $K$-component Gaussian-mixture family.
-    
-    Thus, $J_K^\lambda \xrightarrow[\lambda\downarrow0]{} J_K^0$ while $J_K^0 \xrightarrow[K\to\infty]{} J$ requires consistency of the Gaussian-mixture representation.
-    
-    If the decoder constants $C_{\Gamma,K}$ are uniformly bounded in $K$, then any sequence satisfying $\lambda_K\to0$ and $\delta_K^\theta\to0$ is sufficient. Without such a uniform bound, the correct requirement is $C_{\Gamma,K}\lambda_K\to0$.
-\end{remark}
+The order of the two limits matters. At fixed $K$, sending $\lambda\downarrow0$ only removes the artificial randomization and recovers $J_K^0$, not $J$; recovering the original problem requires consistency of the representation, and the correct joint requirement is $C_{\Gamma,K}\lambda_K\to0$ rather than $\lambda_K\to0$, unless the decoder constants $C_{\Gamma,K}$ are bounded uniformly in $K$.
 
-\begin{remark}[Exact finite-dimensional closure]
-    If the population flow belongs exactly to $\Gc_K$, so that $\mu_t^\theta = \bar\mu_{K,t}^\theta \qquad \text{for all }t$, then $\delta_K^\theta=0$ and 
-    \begin{align}
-        \left| J_K^\lambda(\theta) - J(\theta) \right| \leq C_T C_{\Gamma,K}\lambda.
-    \end{align}
-    This includes the Gaussian linear--quadratic setting with $K=1$ as a special case.
-\end{remark}
+If the population flow belongs exactly to $\Gc_K$, so that $\mu_t^\theta=\bar\mu_{K,t}^\theta$ for all $t$, then $\delta_K^\theta=0$ and the bound reduces to $|J_K^\lambda(\theta)-J(\theta)|\leq C_TC_{\Gamma,K}\lambda$. This includes the Gaussian linear--quadratic setting with $K=1$, which is the case studied in Chapter~\ref{chapter:experiments}.
 
 For policy optimization, pointwise convergence in $\theta$ is not sufficient by itself. Uniform convergence over the policy class allows us to transfer optimality properties from the perturbed problems to the original MFC problem.
 
@@ -1321,8 +718,8 @@ As a direct consequence, the optimal values converge.
     \label{cor:gmm-optimal-policy-convergence}
     Assume the hypotheses of Corollary~\ref{cor:gmm-uniform-objective-convergence} and suppose that $\Theta$ is compact and that $J:\Theta\to\R$ is continuous. Let
     \begin{align}
-        V &\coloneqq \inf_{\theta\in\Theta} J(\theta), \\
-        V_K^\lambda &\coloneqq \inf_{\theta\in\Theta} J_K^\lambda(\theta).
+        V &\coloneqq \sup_{\theta\in\Theta} J(\theta), \\
+        V_K^\lambda &\coloneqq \sup_{\theta\in\Theta} J_K^\lambda(\theta).
     \end{align}
     Then
     \begin{align}
@@ -1332,20 +729,16 @@ As a direct consequence, the optimal values converge.
 
     Hence, for any sequence $(K_n,\lambda_n)$ satisfying $\Delta_{K_n}\to0$ and $C_{\Gamma,K_n}\lambda_n\to0$, we have $V_{K,n}^{\lambda_n}\to V$.
 
-    Moreover, let $\theta_n^\star\in\argmin_{\theta\in\Theta}J_{K_n}^{\lambda_n}(\theta)$. Every accumulation point of $(\theta_n^\star)_{n\geq1}$ belongs to $\argmin_{\theta\in\Theta}J(\theta)$. In particular, if $J$ admits a unique minimizer $\theta^\star$, then
-    \begin{align}
-        \theta_n^\star \longrightarrow \theta^\star.
-    \end{align}
+    Moreover, let $\theta_n^\star\in\argmax_{\theta\in\Theta}J_{K_n}^{\lambda_n}(\theta)$. Every accumulation point of $(\theta_n^\star)_{n\geq1}$ belongs to $\argmax_{\theta\in\Theta}J(\theta)$. In particular, if $J$ admits a unique maximizer $\theta^\star$, then $\theta_n^\star \longrightarrow \theta^\star$.
 \end{corollary}
 
-\begin{proof}
-    The optimal-value estimate follows from the elementary inequality $\left| \inf_\theta f(\theta) - \inf_\theta g(\theta) \right| \leq \sup_\theta |f(\theta)-g(\theta)|$.
-
-    Let now $\theta_{n_j}^\star\to\bar\theta$ be an arbitrary convergent subsequence, which exists by compactness of $\Theta$. For every $\theta\in\Theta$, $J_{K_{n_j}}^{\lambda_{n_j}} (\theta_{n_j}^\star) \leq J_{K_{n_j}}^{\lambda_{n_j}} (\theta)$. By uniform convergence, $J(\theta_{n_j}^\star) - J_{K_{n_j}}^{\lambda_{n_j}} (\theta_{n_j}^\star) \longrightarrow0$ uniformly, and similarly for the right-hand side. Taking $j\to\infty$ and using continuity of $J$ gives $J(\bar\theta)\leq J(\theta)$ for $\theta\in\Theta$. Therefore $\bar\theta$ is an optimizer of the original problem. If the optimizer is unique, every convergent subsequence has the same limit $\theta^\star$, and compactness therefore implies $\theta_n^\star\to\theta^\star$.
-\end{proof}
+The value estimate follows from $|\sup_\theta f-\sup_\theta g|\leq\sup_\theta|f-g|$, and the statement on maximizers is the standard argmax-continuity argument under uniform convergence; see Appendix~\ref{appendix:gmm-optimizer-proofs}.
 
 Theorem~\ref{thm:gmm-objective-convergence} establishes convergence at the objective level. For policy-gradient learning, however, we require the stronger property $\nabla_\theta J_K^\lambda(\theta) \longrightarrow \nabla_\theta J(\theta)$. Objective convergence alone does not imply convergence of gradients. 
 
+\paragraph{From mixtures to moment charts.}
+One point of vocabulary matters before the experiments. The construction above is stated for the Gaussian-mixture chart $\Gamma_K$ because that is the case in which a general population law on $\R^d$ admits a finite-dimensional representation with an explicit decoder, and it is the case in which the representation error $\delta_K^\theta$ is genuinely present. Nothing in the argument uses the mixture structure itself: what it uses is a finite-dimensional chart $z\mapsto\Gamma(z)$, a randomization $Z^{\lambda,\theta}=z^\theta+\lambda U$ within it, and a sensitivity $D_\theta z^\theta$. Any such chart gives the same density, the same score \eqref{eq:gmm-coordinate-score-sampled} and the same objective-convergence estimate. The continuous-state benchmarks of Chapter~\ref{chapter:experiments} are instances of this kind with an exact low-dimensional chart rather than a fitted mixture. On both, the perturbed population argument is one-dimensional, given by the mean, because that is the only functional of the law through which the policy, the transition and the reward depend on the population; the chart is exact and $\delta_K^\theta=0$ by construction. The remaining moments do not disappear: the variance is propagated alongside the mean by the closed recursion of each benchmark, but only to evaluate the exact objective and the closed-form optimum at a frozen policy, never as part of the perturbed argument or of a gradient step. They should therefore be read as exact-chart instances of the continuous construction, testing the perturbation and the sensitivity recursion in isolation, and not as a test of Gaussian-mixture fitting, which is not exercised anywhere in this report.
+
 We have so far introduced the Gaussian-mixture representation and perturbation of the population law, derived the density and score of the randomized GMM parameters, and proved the convergence of the perturbed objective.
 
-The continuous-state theory is therefore still incomplete at this stage. The remaining work includes proving the gradient-level convergence, obtaining a policy-gradient formula for the perturbed problem, estimating the population-flow sensitivity, providing a Monte Carlo estimator of the perturbed policy gradient, and finally obtaining a bias and mean-square error decomposition. Additional benchmarks, algorithmic variants and numerical methods are also being considered, and may be incorporated during the final months of the internship.
+The continuous-state theory is therefore still incomplete at this stage. The remaining work includes proving the gradient-level convergence, obtaining a policy-gradient formula for the perturbed problem, estimating the population-flow sensitivity, providing a Monte Carlo estimator of the perturbed policy gradient, and finally obtaining a bias and mean-square error decomposition. Additional benchmarks, algorithmic variants and numerical methods are natural directions for the remaining part of the internship.

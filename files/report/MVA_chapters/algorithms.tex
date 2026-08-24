@@ -3,7 +3,7 @@
 
 The previous chapter derived policy-gradient identities for perturbed mean-field control problems. This chapter describes how these identities are turned into practical algorithms. The emphasis is algorithmic rather than benchmark-specific: choices such as horizons, perturbation grids, validation initial laws, and simulator budgets are deferred to Chapter~\ref{chapter:experiments}.
 
-All methods follow the same outer loop. At iteration $m$, a Monte Carlo estimator $\widehat G_m(\theta_m)$ of the relevant policy gradient is computed, the policy parameter is updated with Adam \cite{kingma2014adam}, and diagnostic quantities such as the objective estimate, gradient norm, and validation objective are recorded. Since the report uses a reward-maximization convention, the optimizer is applied to the negative estimated gradient when implemented through a loss-minimization interface.
+All methods follow the same outer loop. At iteration $m$, a Monte Carlo estimator $\widehat G_m(\theta_m)$ of the relevant policy gradient is computed, the policy parameter is updated with Adam \cite{kingma2014adam}, and diagnostic quantities such as the objective estimate, gradient norm, and validation objective are recorded. Most benchmarks are written in reward-maximization form; the linear--quadratic benchmark is implemented as a cost minimization and reported with the corresponding sign convention in Chapter~\ref{chapter:experiments}. When a loss-minimization interface is used for a reward objective, the optimizer is applied to the negative estimated gradient.
 
 \section{Baseline policy-gradient estimators}
 
@@ -49,9 +49,9 @@ The transport estimator is the practical version of the estimator constructed in
 \Require policy parameter $\theta$, scales $\lambda,\eta$, main batch size $B$, auxiliary batch size $n$, horizon $T$
 \State Compute or estimate the population flow $(\mu_t^\theta)_{t=0}^T$
 \State Initialize $\widehat D_0^{\eta,n,\theta}=0$
+\State Simulate $n$ auxiliary trajectories with perturbed laws $(1-\eta)\mu_s^\theta+\eta q_s$
 \For{$t=1,\ldots,T$}
-    \State Simulate $n$ auxiliary trajectories with perturbed laws $(1-\eta)\mu_s^\theta+\eta q_s$
-    \State Estimate $\widehat D_t^{\eta,n,\theta}$ using the triangular likelihood-ratio recursion
+    \State Estimate $\widehat D_t^{\eta,n,\theta}$ from the shared auxiliary trajectories using the triangular likelihood-ratio recursion
 \EndFor
 \For{$b=1,\ldots,B$}
     \State Simulate one perturbed trajectory with laws $M_t^{\lambda,\theta,(b)}=(1-\lambda)\mu_t^\theta+\lambda q_t^{(b)}$
@@ -86,35 +86,18 @@ The transport estimator is the practical version of the estimator constructed in
 \end{algorithmic}
 \end{algorithm}
 
-The continuous-state transport estimator has the same structure. The difference is that the population law is represented through finite-dimensional features or moments, and the simplex perturbation is replaced by an environment-specific perturbation map. If $Y_t^\theta$ denotes the chosen law feature, the perturbed feature has the generic affine form
-\begin{align}
-    Y_t^{\lambda,\theta}
-    =
-    \Phi_\lambda(Y_t^\theta,\xi_t),
-\end{align}
+The continuous-state transport estimator has the same structure. The difference is that the population law is represented through finite-dimensional features or moments, and the simplex perturbation is replaced by an environment-specific perturbation map. If $Y_t^\theta$ denotes the chosen law feature, the perturbed feature has the generic affine form $Y_t^{\lambda,\theta} = \Phi_\lambda(Y_t^\theta,\xi_t)$,
 where $\xi_t$ is exogenous noise. The environment supplies both $\Phi_\lambda$ and the corresponding transport score. The auxiliary stage estimates $\nabla_\theta Y_t^\theta$, and the main stage combines the policy score with the transport score exactly as in Algorithm~\ref{alg:discrete-transport}.
 
+The statement is abstract because the feature $Y_t^\theta$ is whatever finite-dimensional chart the environment exposes. In the two continuous-state benchmarks of Chapter~\ref{chapter:experiments} it is the population mean, the only functional of the law that the coefficients read: $\Phi_\lambda(y,\xi)=(1+\lambda\zeta)y+\lambda\beta$ with $\zeta,\beta$ i.i.d.\ Gaussian, the score is the corresponding Gaussian score of Corollary~\ref{cor:gmm-gaussian-score}, and $\nabla_\theta Y_t^\theta$ is estimated by the auxiliary recursion applied to the closed moment recursion of the benchmark. The exact moment recursion is used to propagate the population during training in the exact-flow runs and is replaced by a particle estimate in the particle-flow runs; in neither case is it differentiated, which is what keeps the estimator model-free in the sense of Section~\ref{sec:canonical-construction}.
+
 \section{Adaptive transport}
+\label{sec:adaptive-transport}
 
 Fixed-scale transport requires choosing $\lambda$ and $\eta$ before training. The adaptive version keeps the same gradient estimator but periodically updates these scales from local bias-variance diagnostics. The idea is to compare gradient estimates at the current scales and at contracted scales. If reducing a scale changes the estimated gradient more than expected from Monte Carlo noise, the current scale is interpreted as too biased and is decreased; otherwise it can remain large enough to avoid excessive score variance.
 
-Let $c_\lambda,c_\eta\in(0,1)$ be contraction factors. At an adaptive checkpoint, four gradient estimates are computed using the scale pairs
-\begin{align}
-    (\lambda,\eta),
-    \qquad
-    (c_\lambda\lambda,\eta),
-    \qquad
-    (\lambda,c_\eta\eta),
-    \qquad
-    (c_\lambda\lambda,c_\eta\eta).
-\end{align}
-For each replication $r=1,\ldots,R$, denote the corresponding gradient estimates by
-\begin{align}
-    g_{++}^{(r)},\qquad
-    g_{-+}^{(r)},\qquad
-    g_{+-}^{(r)},\qquad
-    g_{--}^{(r)},
-\end{align}
+Let $c_\lambda,c_\eta\in(0,1)$ be contraction factors. At an adaptive checkpoint, four gradient estimates are computed using the scale pairs $(\lambda,\eta), \qquad (c_\lambda\lambda,\eta), \qquad (\lambda,c_\eta\eta), \qquad (c_\lambda\lambda,c_\eta\eta)$.
+For each replication $r=1,\ldots,R$, denote the corresponding gradient estimates by $g_{++}^{(r)},\qquad g_{-+}^{(r)},\qquad g_{+-}^{(r)},\qquad g_{--}^{(r)}$,
 where the first sign refers to the main scale $\lambda$ and the second to the auxiliary scale $\eta$; the sign $+$ means current scale and the sign $-$ means contracted scale. The effect of contracting only $\lambda$ is estimated by averaging over the two auxiliary scales,
 \begin{align}
     \Delta_\lambda^{(r)}
@@ -183,12 +166,7 @@ If the leading perturbation errors scale like $\lambda^{p_\lambda}$ and $\eta^{p
     \frac{\widehat d_\eta}
     {(1-c_\eta^{p_\eta})^2}.
 \end{align}
-The variance proxy is the empirical trace covariance of the current-scale estimator,
-\begin{align}
-    \widehat v
-    =
-    \widehat{\operatorname{trCov}}(g_{++}).
-\end{align}
+The variance proxy is the empirical trace covariance of the current-scale estimator, $\widehat v = \widehat{\operatorname{trCov}}(g_{++})$.
 The controller then uses the log-ratio signals
 \begin{align}
     z_\lambda
@@ -233,33 +211,9 @@ The adaptive controller is deliberately separated from the policy optimizer. The
 
 \section{Computational cost}
 
-The relevant cost unit is one simulated transition. For a horizon $T$ and a main batch of size $B$, REINFORCE has per-update cost
-\begin{align}
-    C_{\mathrm{RF}}
-    =
-    BT.
-\end{align}
-For finite-state MF-REINFORCE with $n$ auxiliary trajectories, the auxiliary procedure requires perturbations over all pairs of time indices, yielding
-\begin{align}
-    C_{\mathrm{MF}}
-    =
-    BT
-    +
-    Bn\frac{T(T+1)}{2}.
-\end{align}
-The recursive transport estimator uses one auxiliary forward pass and one main forward pass, hence
-\begin{align}
-    C_{\mathrm{tr}}
-    =
-    T(B+n).
-\end{align}
-Adaptive transport adds the amortized cost of its checkpoints. If a checkpoint is performed every $K$ iterations and uses $R$ independent replications of the contracted-scale diagnostic, its average per-update cost is written abstractly as
-\begin{align}
-    C_{\mathrm{ad}}
-    =
-    C_{\mathrm{tr}}
-    +
-    \frac1K C_{\mathrm{diag}}(R,T).
-\end{align}
+The relevant cost unit is one simulated transition. For a horizon $T$ and a main batch of size $B$, REINFORCE has per-update cost $C_{\mathrm{RF}} = BT$.
+For finite-state MF-REINFORCE with $n$ auxiliary trajectories and shared state-gradient reuse, the auxiliary procedure requires two perturbed forward simulations for each pair of time indices, yielding $C_{\mathrm{MF}} = BT + 2n\frac{T(T+1)}{2}$.
+The recursive transport estimator uses one auxiliary forward pass and one main forward pass, hence $C_{\mathrm{tr}} = T(B+n)$.
+Adaptive transport adds the amortized cost of its checkpoints. If a checkpoint is performed every $K$ iterations and uses $R$ independent replications of the contracted-scale diagnostic, its average per-update cost is written abstractly as $C_{\mathrm{ad}} = C_{\mathrm{tr}} + \frac1K C_{\mathrm{diag}}(R,T)$.
 
 These expressions are used only to account for simulator effort. They do not include common optimizer overhead, tensor operations, logging, or deterministic validation. Their main implication is structural: MF-REINFORCE has quadratic horizon dependence in its auxiliary estimator, while transport keeps linear horizon dependence through the recursive sensitivity construction.

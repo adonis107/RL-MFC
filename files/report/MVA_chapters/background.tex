@@ -41,10 +41,7 @@ Reinforcement learning methods differ in what they attempt to learn from these s
 \section{Policy-gradient methods}
 \label{sec:background-policy_gradient}
 
-Policy-gradient methods optimize a differentiable family of randomized policies directly. They include the REINFORCE algorithm of \cite{williams1992reinforce} and the broader policy-gradient framework of \cite{sutton1999policygradient}. Let $\Theta\subseteq \R^D$ and suppose that $\pi_t^\theta$ admits a positive differentiable density with respect to a fixed reference measure $\nu_\Ac$:
-\begin{align}
-    \pi_t^\theta(\d a\mid x) = p_t^\theta(a\mid x)\nu_\Ac(\d a).
-\end{align}
+Policy-gradient methods optimize a differentiable family of randomized policies directly. They include the REINFORCE algorithm of \cite{williams1992reinforce} and the broader policy-gradient framework of \cite{sutton1999policygradient}. Let $\Theta\subseteq \R^D$ and suppose that $\pi_t^\theta$ admits a positive differentiable density with respect to a fixed reference measure $\nu_\Ac$: $\pi_t^\theta(\d a\mid x) = p_t^\theta(a\mid x)\nu_\Ac(\d a)$.
 We write $J(\theta)=J(\pi^\theta)$ and seek a trajectory-based estimator of $\nabla_\theta J(\theta)$.
 
 \subsection{Likelihood-ratio representation}
@@ -89,7 +86,7 @@ The estimator may nevertheless have high variance. If $b_t(X_t)$ is any integrab
     \label{eq:background-reinforce_baseline}
     \nabla_\theta J(\theta) = \E^{\pi^\theta} \left[\sum_{t=0}^{T-1} \nabla_\theta\log p_t^\theta(\alpha_t\mid X_t) (C_t - b_t(X_t)) \right].
 \end{align}
-Subtracting the baseline therefore preserves unbiasedness while potentially reducing variance. A common choice is the conditional expected cost-to-go $b_t(x)=\E^{\pi^\theta}[C_t\mid X_t=x]$, although it is not in general the variance-minimizing baseline{greensmith2004variance}. Estimating this quantity jointly with the policy leads to actor--critic methods. The present work instead builds on the score-function structure of REINFORCE.
+Subtracting the baseline therefore preserves unbiasedness while potentially reducing variance. A common choice is the conditional expected cost-to-go $b_t(x)=\E^{\pi^\theta}[C_t\mid X_t=x]$, although it is not in general the variance-minimizing baseline \cite{greensmith2004variance}. Estimating this quantity jointly with the policy leads to actor--critic methods. The present work instead builds on the score-function structure of REINFORCE.
 
 
 \section{Mean-field control}
@@ -138,10 +135,7 @@ For a finite state space, the population law is represented exactly by a vector 
 \end{align}
 such as moments, Fourier coefficients, interaction fields or kernel features. For example, one may take $F_j(m)=\langle\varphi_j,m\rangle=\int_\Xc\varphi_j(x)m(\d x)$. A sufficiently rich separating family of test functions characterizes the measure. A finite collection is exact when the problem has a corresponding finite-dimensional structure, and otherwise provides a task-dependent approximation.
 
-A related approach is based on cylindrical representations
-\begin{align}
-    \Phi_J(m) = \left(\langle\varphi_1,m\rangle,\ldots,\langle\varphi_J,m\rangle \right),
-\end{align}
+A related approach is based on cylindrical representations $\Phi_J(m) = \left(\langle\varphi_1,m\rangle,\ldots,\langle\varphi_J,m\rangle \right)$,
 which reduce an operator on probability measures to a function of finitely many measure functionals. Mekkaoui, Pham and Warin establish a universal approximation result of this form for operators on labelled conditional distributions and polynomial moment maps in their numerical implementation \cite{LO}.
 
 This representation issue also enters the policy-gradient construction. After the population law is randomized, the mean-field argument $M_t^{\lambda,\theta}$ is itself a random measure. The finite-dimensional object whose density is studied is therefore
@@ -149,13 +143,13 @@ This representation issue also enters the policy-gradient construction. After th
     \label{eq:background-random_measure_representation}
     Z_t^{\lambda,\theta} = \Psi\left(M_t^{\lambda,\theta}\right),\qquad \Lc\left(Z_t^{\lambda,\theta}\right)\in\Pc(\R^d).
 \end{align}
-Thus the problem is not only to represent the population law, but to determine the joint law of functionals that characterize the relevant part of it. This law may admit an ordinary density and score even though there is no canonical lebesgue measure on $\Pc(\Xc)$. The choice, or learning, of $\Psi$ is therefore part of the method: it must retain the distributional information used by the dynamics, costs and policy while remaining estimable from population samples.
+Thus the problem is not only to represent the population law, but to determine the joint law of functionals that characterize the relevant part of it. This law may admit an ordinary density and score even though there is no canonical Lebesgue measure on $\Pc(\Xc)$. The choice, or learning, of $\Psi$ is therefore part of the method: it must retain the distributional information used by the dynamics, costs and policy while remaining estimable from population samples.
 
 \subsection{Model-free reinforcement learning for MFC}
 
 MFC is closely related to cooperative multi-agent reinforcement learning (MARL). In a finite-agent formulation, learning a joint policy becomes difficult as the joint state and action spaces grow with population. Mean-field methods replace the individual interactions by aggregate population quantities, as in mean-field MARL \cite{yang2018mean}. For cooperative systems, the connection is made more precise in \cite{mondal2022approximation}, which studies how finite-agent MARL problems can be approximated by MFC problems. Mean-field MARL and MFC are not interchangeable, however the latter is the limiting control problem of a cooperative population under a common objective, which is the setting considered here.
 
-When the transition and cost functions are unknown, the policy or value function must be learned directly from simulated or observed trajectories. Most model-free methods for MFC are value-based. A two-timescale mean-field $Q$-learning algorithm in discrete state and action spaces is proposed in \cite{angiuli2022unified}.In \cite{carmona2023model}, MFC is formulated as a lifted mean-field MDP and tabular and deep $Q$-learning methods are developed on this space. These methods avoid using the transition model explicitely, but the value function still takes a population distribution as part of its input.
+When the transition and cost functions are unknown, the policy or value function must be learned directly from simulated or observed trajectories. Most model-free methods for MFC are value-based. A two-timescale mean-field $Q$-learning algorithm in discrete state and action spaces is proposed in \cite{angiuli2022unified}. In \cite{carmona2023model}, MFC is formulated as a lifted mean-field MDP and tabular and deep $Q$-learning methods are developed on this space. These methods avoid using the transition model explicitly, but the value function still takes a population distribution as part of its input.
 
 Policy-based methods optimize a parametrized policy directly and are useful when the policy has a compact representation or the action space is continuous. Related actor--critic methods have been developed for continuous-time MFC with randomized policies \cite{frikha2025actor}, and more recently for extended MFC with deterministic policies \cite{cheng2026actor}. These approaches use continuous-time gradient representations and therefore differ from the discrete-time likelihood-ratio setting of this report. In discrete time, standard REINFORCE is not directly applicable: changing the policy parameters also changes the population flow $\mu_t^\theta$, hence the costs and transition kernels evaluated along that flow. The usual policy-score term does not account for this dependence.
 
