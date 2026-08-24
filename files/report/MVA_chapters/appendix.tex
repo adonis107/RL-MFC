@@ -1,0 +1,270 @@
+\appendix
+
+\chapter{Technical Proofs}
+\label{appendix:technical-proofs}
+
+This appendix collects the technical arguments that support the convergence and estimator results used in Chapter~\ref{chapter:methodology}. They are kept here to preserve the flow of the main text while keeping the derivations available.
+
+\section{Discrete-State Space Proofs}
+\label{appendix-discrete_proofs}
+
+\subsection{Density and Score Computations}
+\label{appendix:discrete-density-proofs}
+
+We first justify the density of the logistic perturbation. Work in the coordinates $(p_1,\ldots,p_{N-1})$ on the simplex, with $p_N=1-\sum_{i=1}^{N-1}p_i$. The inverse of the logistic map is $z_i=\log(p_i/p_N)$. Its Jacobian satisfies
+\begin{align}
+    \frac{\partial z_i}{\partial p_j}
+    =
+    \frac{\mathbf 1_{\{i=j\}}}{p_i}
+    +
+    \frac{1}{p_N},
+    \qquad i,j=1,\ldots,N-1.
+\end{align}
+Hence,
+\begin{align}
+    \left|\det D\varphi^{-1}(p)\right|
+    &=
+    \det\left(\operatorname{diag}\left(\frac{1}{p_1},\ldots,\frac{1}{p_{N-1}}\right)
+    +
+    \frac{1}{p_N}\mathbf 1\mathbf 1^\top\right)\\
+    &=
+    \prod_{i=1}^{N-1}\frac{1}{p_i}
+    \left(1+\frac{1}{p_N}\sum_{i=1}^{N-1}p_i\right)
+    =
+    \frac{1}{\prod_{i=1}^N p_i}.
+\end{align}
+The change-of-variables formula therefore gives
+\begin{align}
+    f_q(p)
+    =
+    \rho\left(\log\frac{p_1}{p_N},\ldots,\log\frac{p_{N-1}}{p_N}\right)
+    \frac{1}{\prod_{i=1}^N p_i}.
+\end{align}
+
+For the density of $M_t^{\lambda,\theta}$, the affine inverse is
+\begin{align}
+    p_i^{\lambda,\theta}(m)
+    =
+    \frac{m_i-(1-\lambda)\mu_t^\theta(i)}{\lambda},
+    \qquad i=1,\ldots,N,
+\end{align}
+with only the first $N-1$ coordinates independent. The Jacobian determinant of this inverse map in simplex coordinates is $\lambda^{-(N-1)}$, so another change of variables gives the density stated in the main text.
+
+It remains to compute the score. Fix $m$ in the interior of the support and write $p_i=p_i^{\lambda,\theta}(m)$, $z_i=\log(p_i/p_N)$, and $a_i(z)=\partial_{z_i}\log\rho(z)$. At fixed $m$,
+\begin{align}
+    \partial_\theta p_i
+    =
+    -\frac{1-\lambda}{\lambda}\partial_\theta\mu_t^\theta(i),
+    \qquad
+    i=1,\ldots,N.
+\end{align}
+Since $\sum_i\partial_\theta\mu_t^\theta(i)=0$, the last coordinate can be eliminated by
+\begin{align}
+    \partial_\theta\mu_t^\theta(N)
+    =
+    -\sum_{k=1}^{N-1}\partial_\theta\mu_t^\theta(k).
+\end{align}
+Differentiating the logarithm of the density gives
+\begin{align}
+    \partial_\theta \log f_t^{\lambda,\theta}(m)
+    &=
+    \sum_{i=1}^{N-1}a_i(z)\left(\frac{\partial_\theta p_i}{p_i}-\frac{\partial_\theta p_N}{p_N}\right)
+    -
+    \sum_{i=1}^N\frac{\partial_\theta p_i}{p_i}\\
+    &=
+    -\frac{1-\lambda}{\lambda}
+    \sum_{k=1}^{N-1}
+    \left(
+        \frac{a_k(z)}{p_k}
+        +
+        \frac{\sum_{i=1}^{N-1}a_i(z)}{p_N}
+        -
+        \frac{1}{p_k}
+        +
+        \frac{1}{p_N}
+    \right)
+    \partial_\theta\mu_t^\theta(k).
+\end{align}
+This is exactly the expression of Corollary~\ref{corollary:discrete-score-density}.
+
+\subsection{Objective Convergence}
+\label{appendix:objective-convergence-proofs}
+
+We prove the stability of the perturbed state marginal. The estimate is true at $t=0$ because $\nu_0^{\lambda,\theta}=\mu_0^\theta=\mu_0$. Assume it holds at time $t$. For any $\psi:\Xc\to[-1,1]$, add and subtract the same kernel evaluated at $X_t^\theta$ and $M_t^{\lambda,\theta}$:
+\begin{align}
+    &\left|\sum_j\psi(j)\left(\nu_{t+1}^{\lambda,\theta}(j)-\mu_{t+1}^\theta(j)\right)\right|\\
+    &\quad\leq
+    \left|
+    \sum_i\left(\nu_t^{\lambda,\theta}(i)-\mu_t^\theta(i)\right)
+    \sum_j\psi(j)\overline K_t^{\lambda,\theta}(j\mid i)
+    \right|
+    +
+    2L_K\E\left[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)\right],
+\end{align}
+where $\overline K_t^{\lambda,\theta}(j\mid i)=\E[K_t^\theta(j\mid i,M_t^{\lambda,\theta})]$. Since $\overline K_t^{\lambda,\theta}$ is Markov, the first term is bounded by $2d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)$. Taking the supremum over $\psi$ yields
+\begin{align}
+    d_\mathrm{TV}(\nu_{t+1}^{\lambda,\theta},\mu_{t+1}^\theta)
+    \leq
+    d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)
+    +
+    L_K\E\left[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)\right].
+\end{align}
+The perturbation estimate gives $\E[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)]\leq\lambda$, so induction gives
+\begin{align}
+    d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)
+    \leq
+    L_K\lambda t.
+\end{align}
+
+For the objective, write
+\begin{align}
+    J(\theta)
+    &=
+    \sum_{t=0}^{T-1}\sum_i\mu_t^\theta(i)R_t^\theta(i,\mu_t^\theta)
+    +
+    \sum_i\mu_T^\theta(i)g(i,\mu_T^\theta),\\
+    J^\lambda(\theta)
+    &=
+    \sum_{t=0}^{T-1}\E[R_t^\theta(X_t^{\lambda,\theta},M_t^{\lambda,\theta})]
+    +
+    \E[g(X_T^{\lambda,\theta},M_T^{\lambda,\theta})].
+\end{align}
+At a running time $t$, independence of $M_t^{\lambda,\theta}$ and $X_t^{\lambda,\theta}$ gives the decomposition
+\begin{align}
+    &\E[R_t^\theta(X_t^{\lambda,\theta},M_t^{\lambda,\theta})]
+    -
+    \sum_i\mu_t^\theta(i)R_t^\theta(i,\mu_t^\theta)\\
+    &\quad=
+    \sum_i(\nu_t^{\lambda,\theta}(i)-\mu_t^\theta(i))
+    \E[R_t^\theta(i,M_t^{\lambda,\theta})]
+    +
+    \sum_i\mu_t^\theta(i)
+    \E[R_t^\theta(i,M_t^{\lambda,\theta})-R_t^\theta(i,\mu_t^\theta)].
+\end{align}
+The boundedness and Lipschitz assumptions imply
+\begin{align}
+    \left|
+    \E[R_t^\theta(X_t^{\lambda,\theta},M_t^{\lambda,\theta})]
+    -
+    \sum_i\mu_t^\theta(i)R_t^\theta(i,\mu_t^\theta)
+    \right|
+    \leq
+    2\overline R L_K\lambda t + L_R\lambda.
+\end{align}
+The terminal reward is handled in the same way:
+\begin{align}
+    \left|
+    \E[g(X_T^{\lambda,\theta},M_T^{\lambda,\theta})]
+    -
+    \sum_i\mu_T^\theta(i)g(i,\mu_T^\theta)
+    \right|
+    \leq
+    2\overline g L_K\lambda T + L_g\lambda.
+\end{align}
+Summing over the horizon gives
+\begin{align}
+    |J^\lambda(\theta)-J(\theta)|
+    \leq
+    \lambda\left(
+        \overline R L_K T(T-1)
+        +
+        L_RT
+        +
+        2\overline g L_KT
+        +
+        L_g
+    \right).
+\end{align}
+This proves the announced $C_T\lambda$ bound, uniformly in $\theta$ whenever the constants are uniform.
+
+\subsection{Consistency of Optimizers}
+\label{appendix:optimizer-consistency-proof}
+
+Let $\varepsilon_\lambda=\sup_{\theta\in\Theta}|J^\lambda(\theta)-J(\theta)|$. If $\theta^\star\in\argmax_\Theta J$, the optimality of $\theta_\lambda^\star$ for $J^\lambda$ gives
+\begin{align}
+    J(\theta^\star)
+    &\leq
+    J^\lambda(\theta^\star)+\varepsilon_\lambda
+    \leq
+    J^\lambda(\theta_\lambda^\star)+\varepsilon_\lambda
+    \leq
+    J(\theta_\lambda^\star)+2\varepsilon_\lambda.
+\end{align}
+Along a sequence $\lambda_n\downarrow0$ such that $\theta_{\lambda_n}^\star\to\bar\theta$, continuity of $J$ gives $J(\theta^\star)\leq J(\bar\theta)$. Since $\theta^\star$ is a maximizer, $\bar\theta$ is also a maximizer. If the maximizer is unique, every convergent subsequence has the same limit $\theta^\star$, and compactness of $\Theta$ gives convergence of the full family.
+
+\subsection{Gradient-Level Convergence}
+\label{appendix:gradient-convergence-proofs}
+
+We first prove the stability of the differentiated state marginal. Since the initial law is independent of $\theta$, $E_0^{\lambda,\theta}[h]=D_0^\theta[h]=0$. Differentiating the two marginal recursions gives
+\begin{align}
+    D_{t+1}^\theta[h](j)
+    &=
+    \sum_iD_t^\theta[h](i)K_t^\theta(j\mid i,\mu_t^\theta)
+    +
+    \sum_i\mu_t^\theta(i)\partial_hK_t^\theta(j\mid i,\mu_t^\theta)\\
+    &\quad+
+    \sum_i\mu_t^\theta(i)D_mK_t^\theta(j\mid i,\mu_t^\theta)[D_t^\theta[h]],\\
+    E_{t+1}^{\lambda,\theta}[h](j)
+    &=
+    \sum_iE_t^{\lambda,\theta}[h](i)\overline K_t^{\lambda,\theta}(j\mid i)
+    +
+    \sum_i\nu_t^{\lambda,\theta}(i)\E[\partial_hK_t^\theta(j\mid i,M_t^{\lambda,\theta})]\\
+    &\quad+
+    \sum_i\nu_t^{\lambda,\theta}(i)
+    \E[D_mK_t^\theta(j\mid i,M_t^{\lambda,\theta})[(1-\lambda)D_t^\theta[h]]].
+\end{align}
+The factor $(1-\lambda)D_t^\theta[h]$ comes from $\partial_hM_t^{\lambda,\theta}=(1-\lambda)D_t^\theta[h]$. Add and subtract the unperturbed terms in the second recursion. If $\delta_t=\|E_t^{\lambda,\theta}[h]-D_t^\theta[h]\|_1$, the Markov property of $\overline K_t^{\lambda,\theta}$ controls the transported derivative error by $\delta_t$, while the remaining differences are controlled by the state-marginal estimate, the perturbation estimate, and Assumption~\ref{ass:discrete-gradient-regularity}. More explicitly,
+\begin{align}
+    \delta_{t+1}
+    &\leq
+    \delta_t
+    +
+    C\|D_t^\theta[h]\|_1\E[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)]
+    +
+    C d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)\\
+    &\quad+
+    C\E[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)]
+    +
+    C\lambda\|D_t^\theta[h]\|_1
+    \leq
+    \delta_t+C\lambda.
+\end{align}
+The horizon is finite and the derivatives $D_t^\theta[h]$ are uniformly bounded, so induction gives
+\begin{align}
+    \|E_t^{\lambda,\theta}[h]-D_t^\theta[h]\|_1
+    \leq
+    C_T^D\lambda.
+\end{align}
+
+It remains to compare the directional derivatives of $J^\lambda$ and $J$. They are
+\begin{align}
+    \partial_hJ(\theta)
+    &=
+    \sum_{t=0}^{T-1}\sum_i\mu_t^\theta(i)\partial_hR_t^\theta(i,\mu_t^\theta)
+    +
+    \sum_{t=0}^{T-1}\sum_i\mu_t^\theta(i)D_mR_t^\theta(i,\mu_t^\theta)[D_t^\theta[h]]\\
+    &\quad+
+    \sum_iD_T^\theta[h](i)g(i,\mu_T^\theta)
+    +
+    \sum_i\mu_T^\theta(i)D_mg(i,\mu_T^\theta)[D_T^\theta[h]],\\
+    \partial_hJ^\lambda(\theta)
+    &=
+    \sum_{t=0}^{T-1}\sum_iE_t^{\lambda,\theta}[h](i)\E[R_t^\theta(i,M_t^{\lambda,\theta})]
+    +
+    \sum_{t=0}^{T-1}\sum_i\nu_t^{\lambda,\theta}(i)\E[\partial_hR_t^\theta(i,M_t^{\lambda,\theta})]\\
+    &\quad+
+    \sum_{t=0}^{T-1}\sum_i\nu_t^{\lambda,\theta}(i)
+    \E[D_mR_t^\theta(i,M_t^{\lambda,\theta})[(1-\lambda)D_t^\theta[h]]]\\
+    &\quad+
+    \sum_iE_T^{\lambda,\theta}[h](i)\E[g(i,M_T^{\lambda,\theta})]
+    +
+    \sum_i\nu_T^{\lambda,\theta}(i)
+    \E[D_mg(i,M_T^{\lambda,\theta})[(1-\lambda)D_T^\theta[h]]].
+\end{align}
+Each running contribution differs by $O(\lambda)$: the terms involving $E_t^{\lambda,\theta}[h]-D_t^\theta[h]$ use the differentiated stability bound, the terms involving $\nu_t^{\lambda,\theta}-\mu_t^\theta$ use the state-marginal bound, and the population-argument differences use the Lipschitz regularity together with $\E[d_\mathrm{TV}(M_t^{\lambda,\theta},\mu_t^\theta)]\leq\lambda$. The terminal terms are identical with $g$ in place of $R_t^\theta$. Therefore,
+\begin{align}
+    |\partial_hJ^\lambda(\theta)-\partial_hJ(\theta)|
+    \leq
+    C_T^\nabla\lambda.
+\end{align}
+Taking the supremum over all unit directions $h$ gives $\|\nabla_\theta J^\lambda(\theta)-\nabla_\theta J(\theta)\|\leq C_T^\nabla\lambda$.

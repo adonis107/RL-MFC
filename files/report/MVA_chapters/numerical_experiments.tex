@@ -1,0 +1,888 @@
+\chapter{Numerical Experiments}
+\label{chapter:experiments}
+
+This chapter describes the numerical benchmark suite used to evaluate the proposed transport policy-gradient estimators. The goal is to compare REINFORCE, MF-REINFORCE, fixed-scale transport and adaptive transport under matched simulator budgets, while separating optimization performance from perturbation bias, estimator variance, and population-flow approximation error.
+
+\section{Experimentation protocol}
+\label{subsec:experimentation-protocol}
+
+The numerical experiments are designed to evaluate the proposed transport estimator under a fixed and reproducible protocol before comparing individual benchmarks. The study has three goals. First, it measures whether the transport estimator improves the optimization performance of model-free policy gradients in mean-field control problems. Second, it separates the effect of the perturbation scale from the effect of the estimator geometry by varying the transport radii and, when appropriate, comparing exact and particle population flows. Third, it tests whether the adaptive controller of Algorithm~\ref{alg:adaptive-transport} can select useful perturbation scales without an environment-specific grid search.
+
+Each configuration is repeated over five independent random seeds. A configuration is defined by the benchmark, the horizon, the algorithm, the population-flow mode, the perturbation parameters, and the simulator budget. For paired comparisons, the same seed determines the policy initialization, the sequence of training initial laws, the Monte Carlo samples used by the estimator, and the validation schedule. Reported curves show the seed-wise trajectories as well as the mean and dispersion across seeds.
+
+\paragraph{Algorithms compared.}
+On the finite-state benchmarks we compare four methods. The first is the standard REINFORCE estimator, which ignores the derivative of the population flow and therefore serves as a lower-complexity baseline. The second is the logit-perturbed MF-REINFORCE estimator of \cite{meunier2026model}. The third is the proposed discrete-transport estimator of Algorithm~\ref{alg:discrete-transport}. The fourth is the adaptive transport method of Algorithm~\ref{alg:adaptive-transport}, initialized from the same simplex estimator but allowed to update its main and auxiliary perturbation scales during training.
+
+For MF-REINFORCE, the perturbation level is not retuned in every benchmark. In the two-state, cybersecurity, and distribution experiments, we use the best-performing perturbation value reported in the reference study, since the purpose of the present work is not to rerun the full logit-perturbation grid. Concretely, the retained values are
+\begin{align}
+    \varepsilon_{\mathrm{two\text{-}state}}=0.2,
+    \qquad
+    \varepsilon_{\mathrm{cyber}}=1.0,
+    \qquad
+    \varepsilon_{\mathrm{dist}}=2.0.
+\end{align}
+For advertising, which is not part of the same reference grid, we use \(\varepsilon=1.0\), a representative value that performs reasonably on the other finite-state benchmarks. This choice keeps the comparison focused on the proposed transport estimator rather than on a new hyperparameter search for the baseline.
+
+On continuous-state benchmarks, REINFORCE is compared with the continuous transport estimator and its adaptive version. When exact or oracle quantities are available, they are used only for validation and diagnostics, never in the training update.
+
+\paragraph{Transport grids.}
+For the fixed-scale transport estimator, the two-state benchmark is used as the calibration experiment. We run the broad grid
+\begin{align}
+    \lambda\in\{0.05,0.1,0.2,0.4,0.8\},
+    \qquad
+    \eta\in\{0.4,0.6,0.85,0.95\},
+\end{align}
+where $\lambda$ controls the main perturbation of the population argument and $\eta$ controls the auxiliary sensitivity estimator. The wide $\lambda$-grid is intentionally large enough to reveal both small-perturbation failures, where the score correction becomes unstable, and large-perturbation failures, where the optimized objective can be too biased. The $\eta$-grid tests the empirical observation that the auxiliary estimator benefits from a comparatively large perturbation radius.
+
+After this calibration, the auxiliary scale is fixed at $\eta=0.85$ and the main transport grid is reduced. For cybersecurity, distribution, advertising, and Kuramoto we use
+\begin{align}
+    \lambda\in\{0.1,0.2,0.4\}.
+\end{align}
+For the linear-quadratic benchmark we keep the wider grid $\lambda\in\{0.05,0.1,0.2,0.4,0.8\}$, and for the portfolio benchmark we use $\lambda\in\{0.025,0.05,0.1,0.2,0.4\}$ to account for the scale of the wealth process. Adaptive transport is initialized at
+\begin{align}
+    \lambda_0=0.2,
+    \qquad
+    \eta_0=0.8,
+\end{align}
+with adaptive diagnostics computed every $100$ training iterations from \(4\) independent replications. The checkpoint interval matters: at an interval of $500$ the shorter benchmarks admit only six to ten controller updates over a whole run, which at the controller step size is not enough to move a scale across a useful part of its range, so the adaptive method reduces to its initialization.
+
+At each checkpoint the controller estimates the perturbation bias by a $2\times2$ factorial comparison of the gradient at the current scales $(\lambda,\eta)$ against contracted scales $(c_\lambda\lambda,c_\eta\eta)$, reusing the same trajectory components so that the two effects separate. The bias estimate is the debiased squared norm $\|\overline{\Delta}\|^2-\operatorname{tr}(\widehat\Sigma)/R$, and the update is driven by the logarithmic balance signal $z=\log(\mathrm{bias}/(\kappa\,\mathrm{variance}))$ applied to a logit reparametrization of each scale. Because $R$ is small, this estimate is frequently non-positive, which means only that the bias is unresolved at the available replication count rather than that it is zero. Reading the two cases as one drives the controller towards its upper bound, since an apparent absence of bias is indistinguishable from a regime in which variance dominates; the controller therefore updates a scale only on a resolved estimate, or when the direction test detects a sign change between the contracted and uncontracted gradients.
+
+\paragraph{Horizons and flow modes.}
+The two-state benchmark is run with $T=2$ and $T=5$. The shorter horizon reproduces the reference toy problem, whereas the longer horizon tests whether the estimators degrade when sensitivity information must be propagated through more time steps. For this benchmark, both MF-REINFORCE and transport are run with exact population propagation and with a particle approximation of the population flow. This isolates the effect of replacing the deterministic mean-field recursion by an empirical population law.
+
+The remaining finite-state benchmarks use exact population propagation in the main comparison, since their finite-dimensional population recursions are available exactly and this removes an avoidable source of evaluation noise. The default horizons are $T=3$ for cybersecurity and $T=5$ for distribution and advertising. In the continuous-state experiments, exact flow is used when the law admits a closed finite-dimensional representation, as in the linear-quadratic and portfolio examples; the Kuramoto experiment is run with a particle flow because the relevant law is represented by particles on the circle.
+
+\paragraph{Equal-budget comparison.}
+All headline comparisons are made under an equal simulator-budget constraint. The budget is computed from the per-update complexity formulas of the corresponding estimators and is implemented by adjusting the number of main trajectories and auxiliary trajectories before training. For a finite-state MF-REINFORCE reference run with $B$ main trajectories, $n$ logit-gradient trajectories, and horizon $T$, the reference cost is
+\begin{align}
+    C_{\mathrm{MF}}
+    =
+    BT
+    +
+    2n\frac{T(T+1)}{2}.
+\end{align}
+The transport estimator has linear horizon dependence,
+\begin{align}
+    C_{\mathrm{tr}}
+    =
+    T(B_{\mathrm{tr}}+n_{\mathrm{tr}}),
+\end{align}
+up to the common cost of particle-flow propagation when particle flow is enabled. REINFORCE is given the same simulator budget by increasing its number of trajectories. Adaptive transport receives the same nominal budget after adding its amortized checkpoint overhead. This prevents a method from looking better simply because it used more simulated transitions per optimizer step.
+
+\paragraph{Training and validation.}
+Unless explicitly stated otherwise in a benchmark subsection, policies are optimized with Adam, a deterministic validation is performed every ten training iterations, and the validation policy is evaluated without exploration noise whenever the environment admits an exact population recursion. The training initial law is randomized in order to test whether a policy generalizes across the relevant part of the simplex, while validation is performed on fixed initial laws or fixed validation grids. The exact validation objective, dynamic-programming reference, or closed-form optimizer is used only after freezing the policy parameters.
+
+For each benchmark we produce the same family of outputs: the mean validation reward as a function of training iteration; the final objective and wall-clock runtime; the learned policy error whenever a reference policy is available; the learned state or moment flow; and benchmark-specific diagnostics such as terminal distribution error, regret, control effort, synchronization, or portfolio moments. For transport runs on finite-state spaces, we also check the total-variation perturbation bound. Since
+\begin{align}
+    M_t^{\lambda,\theta}=(1-\lambda)\mu_t^\theta+\lambda q_t,
+\end{align}
+with $q_t\in\Delta_N$, the induced perturbation satisfies
+\begin{align}
+    d_{\mathrm{TV}}\!\left(M_t^{\lambda,\theta},\mu_t^\theta\right)
+    =
+    \lambda d_{\mathrm{TV}}(q_t,\mu_t^\theta)
+    \leq \lambda,
+\end{align}
+and the empirical tables record the corresponding upper bound along the learned flows.
+
+\paragraph{Estimator diagnostics and reproducibility.}
+When a benchmark provides an exact or automatic-differentiation gradient oracle, we perform evaluation-only gradient diagnostics at representative saved policies. Under a fixed simulator budget, independent gradient replications are used to estimate bias, covariance or dispersion, mean-square error, cosine alignment with the oracle, and the size of the transport correction relative to the pure policy-score term. These diagnostics are separate from the training loop and are used only to interpret the observed optimization curves.
+
+Every run writes the full experimental metadata, training history, final policy, runtime summary, and simulator-budget estimate. Figures and tables are regenerated from these saved artifacts rather than from in-memory training state. This makes the reported results reproducible from the recorded seed, benchmark configuration, algorithm configuration, and saved policy parameters.
+
+\section{Discrete-state space benchmarks}
+
+\subsection{Two-State Two-Action}
+\label{subsec:two-state-two-action}
+
+We first consider the two-state two-action mean-field control problem from \cite{meunier2026model,gu2023dynamic}. Besides providing a simple sanity check, this benchmark admits an explicit optimal stationary policy and an exact recursion for the population law, enabling direct evaluation of the proposed gradient estimator against an oracle.
+
+\paragraph{Model.}
+The state and action spaces are $\Xc=\{0,1\}$ and $\Ac=\{\mathrm{ST},\mathrm{MV}\}$ respectively. $\mathrm{ST}$ leaves the current state unchanged, whereas $\mathrm{MV}$ attempts to move the agent to the other state. For $x\in\Xc$ and $a\in\Ac$, the transition kernel is given by
+\begin{align}
+    P(x'\mid x,a)=
+    \begin{cases}
+        \lambda_x\mathbf 1_{\{a=\mathrm{MV}\}},&x'\neq x, \\
+        1-\lambda_x\mathbf 1_{\{a=\mathrm{MV}\}},&x'=x,
+    \end{cases}
+\end{align}
+where $\lambda_0,\lambda_1\in(0,1)$. The transition mechanism itself does not depend on the population distribution; the mean-field interaction enters through the reward. Writing $\bar \mu=p\delta_0+(1-p)\delta_1$ the target population distribution, the running and terminal rewards are
+\begin{align}
+    r(x,a,\mu)=r(x,\mu)=\mathbf 1_{\{x=1\}}-\mu(1)^2-\kappa W_1(\mu,\bar\mu),\qquad g(x,\mu)=r(x,\mu),
+\end{align}
+where the Wasserstein term reduces to $W_1(\mu,\bar\mu)=|\mu(1)-(1-p)|$ on the binary state space endowed with the distance $d(0,1)=1$.
+
+The optimal stationary policy sends any initial population distribution to $\bar\mu$ after one time step and preserves it thereafter. It is available in closed form:
+\begin{align}
+    \pi^\star(a\mid0)
+    &= \frac{\lambda_0 - 1+p}{\lambda_0}\mathbf 1_{\{a=\mathrm{ST}\}} + \frac{1-p}{\lambda_0}\mathbf 1_{\{a=\mathrm{MV}\}},
+    \\
+    \pi^\star(a\mid 1)
+    &= \frac{\lambda_1 - p}{\lambda_1}\mathbf 1_{\{a=\mathrm{ST}\}} + \frac{p}{\lambda_1}\mathbf 1_{\{a=\mathrm{MV}\}}.
+\end{align}
+
+\paragraph{Parameters.}
+We use the parameter values
+\begin{align}
+    \lambda_0=0.5,
+    \qquad
+    \lambda_1=0.8,
+    \qquad
+    \kappa=10,
+    \qquad
+    p=0.6.
+\end{align}
+Under these parameters, $\pi^\star(\mathrm{ST}\mid 0)=0.2$ and $\pi^\star(\mathrm{ST}\mid 1)=0.25$. This policy maps every initial population distribution to $\bar\mu =(0.6,0.4)$ after one time step and keeps the population at that distribution thereafter. The main experiment uses the reference horizon $T=2$, and an additional run with $T=5$ is included to test the sensitivity of the estimators to longer temporal propagation.
+
+\paragraph{Policy parametrization and population recursion.}
+To isolate the behavior of the gradient estimators, we use the same restricted policy class as in the reference experiment. The policy is stationary and does not depend on the population law. It is parametrized by two Bernoulli logits $\theta=(\theta_0,\theta_1)\in\R^2$:
+\begin{align}
+    \pi^\theta(\mathrm{MV}\mid x)
+    =
+    \frac{\exp(\theta_x)}{1+\exp(\theta_x)},
+    \qquad
+    \pi^\theta(\mathrm{ST}\mid x)
+    =
+    \frac{1}{1+\exp(\theta_x)},
+    \qquad x\in\{0,1\}.
+\end{align}
+Writing $m_t^\theta=\mu_t^\theta(1)$, the population law can be propagated exactly by the scalar recursion
+\begin{align}
+    m_{t+1}^\theta
+    =
+    (1-m_t^\theta)\lambda_0\pi^\theta(\mathrm{MV}\mid 0)
+    +
+    m_t^\theta\left(1-\lambda_1\pi^\theta(\mathrm{MV}\mid 1)\right).
+    \label{eq:twostate-population-recursion}
+\end{align}
+Consequently, for a fixed initial mass $m_0$, the unperturbed population objective is available without trajectory noise:
+\begin{align}
+    J(\theta;m_0)
+    =
+    \sum_{t=0}^{T}
+    \left[
+        m_t^\theta
+        -
+        (m_t^\theta)^2
+        -
+        \kappa\left|m_t^\theta-(1-p)\right|
+    \right].
+    \label{eq:twostate-objective}
+\end{align}
+This exact recursion is used to provide the population argument and to evaluate frozen policies. It is not differentiated by REINFORCE, MF-REINFORCE, or the transport estimator during training.
+
+\paragraph{Perturbation choices.}
+MF-REINFORCE uses the retained reference value $\varepsilon=0.2$. For transport, the auxiliary point is sampled as
+\begin{align}
+    U_t\sim\Nc(0,1),
+    \qquad
+    q_t
+    =
+    \left(
+        \frac{\exp(U_t)}{1+\exp(U_t)},
+        \frac{1}{1+\exp(U_t)}
+    \right),
+\end{align}
+and this benchmark is used for the broad transport sweep
+\begin{align}
+    \lambda\in\{0.05,0.1,0.2,0.4,0.8\},
+    \qquad
+    \eta\in\{0.4,0.6,0.85,0.95\},
+\end{align}
+where $\lambda$ is the main perturbation scale and $\eta$ is the auxiliary scale. The adaptive run starts from $\lambda_0=0.2$ and $\eta_0=0.8$.
+
+\paragraph{Training protocol.}
+At each policy update, the initial population distribution is randomized according to $\mu_0(1)\sim\Uc([0.1,0.9])$ and $\mu_0(0)=1-\mu_0(1)$. The policy parameters are initialized at $\theta=(0,0)$ and optimized with Adam for $10{,}000$ training iterations with learning rate $10^{-3}$. In the reference-budget configuration, MF-REINFORCE uses $B=200$ main trajectories and $n=10$ auxiliary trajectories. REINFORCE, fixed-scale transport, and adaptive transport are assigned the corresponding equal simulator budget according to the rules of Section~\ref{subsec:experimentation-protocol}.
+
+We run both exact-flow and particle-flow variants. In the exact-flow variant, \eqref{eq:twostate-population-recursion} is used to compute $(\mu_t^\theta)_{t=0}^T$. In the particle-flow variant, the population argument is estimated from a finite simulated population before being supplied to the policy and reward. This second setting tests whether the estimator remains stable when the mean-field law is available only through a particle approximation.
+
+\paragraph{Validation and diagnostics.}
+Every ten training iterations, the current policy is frozen and evaluated from the fixed validation distribution $\mu_0^\mathrm{val}=(0.2,0.8)$. Since the exact recursion is available, the validation reward is computed from \eqref{eq:twostate-objective} without trajectory noise, even when the policy was trained with a particle-flow approximation.
+
+Policy recovery is measured by the errors
+\begin{align}
+    e_0(\theta)
+    &=
+    \left|\pi^\theta(\mathrm{ST}\mid 0)-0.2\right|,
+    &
+    e_1(\theta)
+    &=
+    \left|\pi^\theta(\mathrm{ST}\mid 1)-0.25\right|.
+\end{align}
+We also record the learned population flow from $\mu_0^\mathrm{val}$ and the average tracking error
+\begin{align}
+    e_{\mathrm{flow}}(\theta)
+    =
+    \frac1T\sum_{t=1}^{T}
+    \left|\mu_t^\theta(1)-(1-p)\right|.
+\end{align}
+Finally, at selected saved policies, the deterministic recursion can be differentiated by automatic differentiation to obtain an evaluation-only oracle for $\nabla_\theta J(\theta;m_0)$. This oracle is used to measure gradient bias, dispersion, mean-square error, and cosine alignment of the model-free estimators under a matched simulator budget. No oracle information is used during training.
+
+
+\subsection{Cybersecurity}
+\label{subsec:cybersecurity}
+
+We next consider the cybersecurity benchmark of \cite{meunier2026model}, inspired by the mean-field game model of \cite{kolokoltsov2016mean} and its mean-field control formulation in \cite{carmona2023model}. A central planner controls the protection status of a large population of computers. Compared with the two-state toy problem, this example has a larger state space, nonlinear dependence on the population law through infection rates, and a neural-network policy depending explicitly on the population distribution.
+
+\paragraph{Model.}
+The state space is $\Xc=\{\mathrm{DI},\mathrm{DS},\mathrm{UI},\mathrm{US}\}$, where the first letter indicates whether the computer is defended or undefended and the second whether it is infected or susceptible. The action space is $\Ac=\{0,1\}$: action $0$ keeps the current protection status, while action $1$ switches between defended and undefended. To avoid confusion with the transport scale, the switching intensity is denoted by $\lambda_{\mathrm{sw}}$.
+
+For a population law $\mu\in\Delta_4$, the infection intensities are
+\begin{align}
+    \iota_D(\mu)
+    &=
+    v_Hq_{\mathrm{inf}}^D+\beta_{DD}\mu(\mathrm{DI})+\beta_{UD}\mu(\mathrm{UI}),
+    \\
+    \iota_U(\mu)
+    &=
+    v_Hq_{\mathrm{inf}}^U+\beta_{UU}\mu(\mathrm{UI})+\beta_{DU}\mu(\mathrm{DI}).
+\end{align}
+In the ordered basis $(\mathrm{DI},\mathrm{DS},\mathrm{UI},\mathrm{US})$, the infinitesimal generator associated with action $a$ is
+\begin{align}
+    Q^{\mu,a}
+    =
+    \begin{pmatrix}
+        -q_{\mathrm{rec}}^D-\lambda_{\mathrm{sw}}a & q_{\mathrm{rec}}^D & \lambda_{\mathrm{sw}}a & 0\\
+        \iota_D(\mu) & -\iota_D(\mu)-\lambda_{\mathrm{sw}}a & 0 & \lambda_{\mathrm{sw}}a\\
+        \lambda_{\mathrm{sw}}a & 0 & -q_{\mathrm{rec}}^U-\lambda_{\mathrm{sw}}a & q_{\mathrm{rec}}^U\\
+        0 & \lambda_{\mathrm{sw}}a & \iota_U(\mu) & -\iota_U(\mu)-\lambda_{\mathrm{sw}}a
+    \end{pmatrix}.
+\end{align}
+The discrete-time transition matrix is $P_{\Delta t}^{\mu,a}=\exp(\Delta t Q^{\mu,a})$. The cost of a state is
+\begin{align}
+    f(x)=k_D\mathbf 1_{\{x\in\{\mathrm{DI},\mathrm{DS}\}\}}+k_I\mathbf 1_{\{x\in\{\mathrm{DI},\mathrm{UI}\}\}},
+\end{align}
+and the running and terminal rewards are $r_{\Delta t}(x,a,\mu)=-\Delta t f(x)$ and $g_{\Delta t}(x,\mu)=-\Delta t f(x)$. With discount factor $\gamma$, the objective is
+\begin{align}
+    J_T(\theta;\mu_0)
+    =
+    \E\left[
+        \sum_{t=0}^{T-1}\gamma^t r_{\Delta t}(X_t,A_t,\mu_t^\theta)
+        +\gamma^Tg_{\Delta t}(X_T,\mu_T^\theta)
+    \right].
+\end{align}
+
+\paragraph{Parameters and policy.}
+We use the parameter values from \cite{meunier2026model}:
+\begin{align}
+    \beta_{UU}&=0.3,&
+    \beta_{UD}&=0.4,&
+    \beta_{DU}&=0.3,&
+    \beta_{DD}&=0.4,\\
+    q_{\mathrm{rec}}^D&=0.5,&
+    q_{\mathrm{rec}}^U&=0.4,&
+    q_{\mathrm{inf}}^D&=0.4,&
+    q_{\mathrm{inf}}^U&=0.3,\\
+    v_H&=0.6,&
+    \lambda_{\mathrm{sw}}&=0.8,&
+    k_D&=0.3,&
+    k_I&=0.5,
+\end{align}
+with $\Delta t=0.2$ and $\gamma=0.5$. The training horizon is $T=3$, while validation is performed over $T_{\mathrm{val}}=50$.
+
+The policy is a two-layer multilayer perceptron with hidden width $32$ and $\tanh$ activations. Its input is $(t,\mu)$ and its output is a $4\times2$ matrix of logits. A row-wise softmax gives
+\begin{align}
+    \pi_t^\theta(a\mid x,\mu)
+    =
+    \frac{\exp(z_{x,a}^\theta(t,\mu))}
+    {\sum_{a'\in\Ac}\exp(z_{x,a'}^\theta(t,\mu))}.
+\end{align}
+For a fixed policy, the population flow is propagated exactly by
+\begin{align}
+    \mu_{t+1}^\theta
+    =
+    \mu_t^\theta K_t^\theta(\mu_t^\theta),
+    \qquad
+    K_t^\theta(\mu)(x,x')
+    =
+    \sum_{a\in\Ac}\pi_t^\theta(a\mid x,\mu)P_{\Delta t}^{\mu,a}(x,x').
+\end{align}
+This recursion is used for population propagation and validation, but is not differentiated during model-free training.
+
+\paragraph{Perturbation choices.}
+MF-REINFORCE uses the retained reference value $\varepsilon=1.0$. For transport, the auxiliary point is sampled as $q_t=\operatorname{softmax}(U_t^{(1)},U_t^{(2)},U_t^{(3)},0)$ with $U_t\sim\Nc(0,I_3)$. The fixed-scale transport grid is $\lambda\in\{0.1,0.2,0.4\}$ with $\eta=0.85$, and adaptive transport starts from $\lambda_0=0.2$, $\eta_0=0.8$.
+
+\paragraph{Training and validation.}
+At each training iteration, the initial law is sampled from $\operatorname{Dirichlet}(1,1,1,1)$. The MF-REINFORCE reference configuration uses $B=200$ main trajectories and $n=1$ auxiliary trajectory; REINFORCE and transport are assigned the corresponding equal simulator budget. The policy is trained for $20{,}000$ iterations with Adam and learning rate $10^{-3}$.
+
+Every ten iterations, the frozen policy is evaluated from the uniform initial law $\mu_0^{\mathrm{val}}=(1/4,1/4,1/4,1/4)$ over the validation horizon. Since the reward depends only on the state, the validation value is computed deterministically from the population flow. We report the validation reward, the four state probabilities over time, the infected and defended fractions, and the population-averaged switching probability.
+
+\subsection{Distribution Planning}
+\label{subsec:distribution-planning}
+
+The distribution-planning benchmark is based on the finite-state control problem used in \cite{meunier2026model,carmona2023model}. The goal is to move a population on a discrete torus towards a prescribed target distribution while penalizing individual movement. This example tests the estimators on a higher-dimensional simplex: the population law has ten coordinates and the policy must coordinate local actions across all sites.
+
+\paragraph{Model.}
+The state space is the discrete torus $\Xc=\Z/10\Z=\{0,\ldots,9\}$ and the action space is $\Ac=\{-1,0,+1\}$. Actions move an agent one site left, keep it in place, or move it one site right. The transition is deterministic:
+\begin{align}
+    P(x'\mid x,a,\mu)
+    =
+    \mathbf 1_{\{x'=x+a\;(\mathrm{mod}\;10)\}}.
+\end{align}
+The target distribution used in the experiments is
+\begin{align}
+    \mu_{\mathrm{target}}
+    =
+    (0.02,0.04,0.09,0.16,0.19,0.19,0.16,0.09,0.04,0.02).
+\end{align}
+With movement penalty $c_{\mathrm{mov}}=0.01$, the running and terminal rewards are
+\begin{align}
+    r(x,a,\mu)
+    &=
+    -c_{\mathrm{mov}}|a|
+    -
+    \|\mu-\mu_{\mathrm{target}}\|_2^2,
+    \\
+    g(x,\mu)
+    &=
+    -\|\mu-\mu_{\mathrm{target}}\|_2^2.
+\end{align}
+The horizon is $T=5$ for both training and validation.
+
+\paragraph{Policy parametrization and population recursion.}
+The policy is represented by a two-layer multilayer perceptron with hidden width $256$ and $\tanh$ activations. Its input is $(t,\mu)$ and its output is a $10\times3$ matrix of logits. A row-wise softmax defines $\pi_t^\theta(a\mid x,\mu)$.
+
+For a fixed policy, the population recursion is exact. If
+\begin{align}
+    K_t^\theta(\mu)(x,x')
+    =
+    \sum_{a\in\Ac}\pi_t^\theta(a\mid x,\mu)\mathbf 1_{\{x'=x+a\;(\mathrm{mod}\;10)\}},
+\end{align}
+then $\mu_{t+1}^\theta=\mu_t^\theta K_t^\theta(\mu_t^\theta)$. Equivalently,
+\begin{align}
+    \mu_{t+1}^\theta(x)
+    =
+    \sum_{a\in\Ac}
+    \mu_t^\theta(x-a)\pi_t^\theta(a\mid x-a,\mu_t^\theta),
+\end{align}
+with all indices understood modulo $10$. This gives a deterministic validation objective:
+\begin{align}
+    J_T(\theta;\mu_0)
+    =
+    -\sum_{t=0}^{T-1}
+    \left[
+        \|\mu_t^\theta-\mu_{\mathrm{target}}\|_2^2
+        +
+        c_{\mathrm{mov}}\sum_{x\in\Xc}\mu_t^\theta(x)
+        \sum_{a\in\Ac}|a|\pi_t^\theta(a\mid x,\mu_t^\theta)
+    \right]
+    -
+    \|\mu_T^\theta-\mu_{\mathrm{target}}\|_2^2.
+\end{align}
+This expression is used only for evaluation of frozen policies.
+
+\paragraph{Perturbation choices.}
+MF-REINFORCE uses the retained reference value $\varepsilon=2.0$. For transport, the auxiliary point is sampled as $q_t=\operatorname{softmax}(U_t^{(1)},\ldots,U_t^{(9)},0)$ with $U_t\sim\Nc(0,I_9)$. The fixed-scale transport grid is $\lambda\in\{0.1,0.2,0.4\}$ with $\eta=0.85$, and the adaptive run starts from $\lambda_0=0.2$, $\eta_0=0.8$.
+
+\paragraph{Training and validation.}
+At each training iteration, the initial population law is sampled from $\operatorname{Dirichlet}(\mathbf 1_{10})$, which keeps the logit perturbation well defined almost surely and explores the interior of $\Delta_{10}$. The MF-REINFORCE reference configuration uses $B=500$ main trajectories and $n=10$ auxiliary trajectories. The policy is trained with Adam for $30{,}000$ iterations with learning rate $10^{-4}$; the training length is reduced relative to the original reference grid after convergence checks for the retained perturbation settings.
+
+Every ten iterations, the frozen policy is evaluated from the uniform initial law $\mu_0^{\mathrm{val}}=(1/10,\ldots,1/10)$. We report the validation reward, the learned population flow, the final distance $\|\mu_T^\theta-\mu_{\mathrm{target}}\|_2$, the average distance along the trajectory, and the expected cumulative movement. The final distribution is plotted against the initial and target distributions to check whether the learned policy produces coherent transport rather than excessive local oscillation.
+
+\subsection{Targeted Advertising}
+\label{subsec:targeted-advertising}
+
+The targeted-advertising benchmark is based on the model introduced by Motte and Pham in \cite{motte_pham_mfmdp}. A planner repeatedly decides whether to advertise to a large population in order to increase the proportion of customers while paying an advertising cost. The example is useful for the present study because the mean-field interaction enters through the transition kernel, while the population dynamics reduce to a one-dimensional deterministic recursion.
+
+\paragraph{Model.}
+The state and action spaces are $\Xc=\{0,1\}$ and $\Ac=\{0,1\}$. State $x=1$ means that the individual is a customer, and action $a=1$ means that an advertisement is displayed. Writing $p=\mu(1)$ for the customer proportion, the transition kernel is
+\begin{align}
+    P(1\mid x,a,\mu)
+    =
+    \min\{p+\kappa_{\mathrm{ad}}a,1\},
+    \qquad
+    P(0\mid x,a,\mu)
+    =
+    1-P(1\mid x,a,\mu).
+\end{align}
+Thus advertising increases the probability of being a customer by $\kappa_{\mathrm{ad}}$, up to saturation at $1$, while the dependence on $p$ models positive social influence. The one-step reward is
+\begin{align}
+    r(x,a,\mu)=x-c_{\mathrm{ad}}a,
+\end{align}
+and the terminal reward is zero. The finite-horizon discounted objective is
+\begin{align}
+    J_T(\theta;p_0)
+    =
+    \E\left[
+        \sum_{t=0}^{T-1}
+        \gamma^t(X_t^\theta-c_{\mathrm{ad}}A_t^\theta)
+    \right].
+\end{align}
+
+\paragraph{Population recursion and reference policy.}
+For a feedback policy $\pi^\theta$, define the aggregate advertising probability
+\begin{align}
+    q_t^\theta
+    =
+    (1-p_t^\theta)\pi_t^\theta(1\mid0,\mu_t^\theta)
+    +
+    p_t^\theta\pi_t^\theta(1\mid1,\mu_t^\theta),
+    \qquad
+    p_t^\theta=\mu_t^\theta(1).
+\end{align}
+The population recursion is then
+\begin{align}
+    p_{t+1}^\theta
+    =
+    p_t^\theta
+    +
+    q_t^\theta\min\{\kappa_{\mathrm{ad}},1-p_t^\theta\},
+    \label{eq:advertising-population-recursion}
+\end{align}
+and the expected one-step reward is $p_t^\theta-c_{\mathrm{ad}}q_t^\theta$.
+
+We use
+\begin{align}
+    \gamma=0.5,
+    \qquad
+    \kappa_{\mathrm{ad}}=0.2,
+    \qquad
+    c_{\mathrm{ad}}=0.15,
+    \qquad
+    T=5.
+\end{align}
+The infinite-horizon source model admits an explicit optimal aggregate advertising probability. For these parameters,
+\begin{align}
+    \widehat q(p)
+    =
+    \begin{cases}
+        1, & p<0.6,\\
+        (0.8-p)/0.2, & 0.6\leq p<0.7,\\
+        1, & 0.7\leq p<0.85,\\
+        0, & 0.85\leq p\leq1.
+    \end{cases}
+\end{align}
+This reference policy is used as a structural policy-recovery diagnostic for the finite-horizon experiment.
+
+\paragraph{Policy parametrization and perturbation choices.}
+The learned policy is a two-layer multilayer perceptron with hidden width $32$ and $\tanh$ activations. Its input is $(t,\mu)$ and its output is a $2\times2$ matrix of logits, converted to action probabilities by a row-wise softmax.
+
+MF-REINFORCE uses $\varepsilon=1.0$. For transport, the auxiliary point is sampled as $q_t=(\operatorname{sigmoid}(U_t),1-\operatorname{sigmoid}(U_t))$ with $U_t\sim\Nc(0,1)$. The fixed-scale transport grid is again $\lambda\in\{0.1,0.2,0.4\}$ with $\eta=0.85$, and adaptive transport starts from $\lambda_0=0.2$, $\eta_0=0.8$.
+
+\paragraph{Training and validation.}
+At each training iteration, the initial customer proportion is sampled from $p_0\sim\Uc([0.05,0.95])$, with $\mu_0=(1-p_0,p_0)$. The MF-REINFORCE reference configuration uses $B=200$ main trajectories and $n=10$ auxiliary trajectories. Policies are trained with Adam for $10{,}000$ iterations with learning rate $10^{-3}$.
+
+Every ten iterations, the frozen policy is evaluated on a fixed uniform grid in $[0.05,0.95]$. The validation value is computed from the exact population recursion \eqref{eq:advertising-population-recursion}. We report the average validation reward, the learned customer-share trajectories, the mean advertising probability, the discounted advertising expenditure, and the error between the learned aggregate advertising probability and the explicit reference policy $\widehat q$.
+
+\section{Continuous-state space benchmarks}
+
+\subsection{Linear--Quadratic}
+\label{subsec:linear-quadratic}
+
+We first consider a scalar linear--quadratic mean-field control problem. This benchmark is deliberately transparent: the population law is Gaussian, the moment recursion is closed, the perturbed objective and its gradient are available in closed form, and the unperturbed optimizer is given by a Riccati recursion. It therefore provides a continuous-state analogue of the two-state benchmark, where optimization errors can be separated from estimator bias and Monte Carlo variance.
+
+\paragraph{Model.}
+The initial state is $X_0\sim\Nc(\mu_0,\Sigma_0)$ and the action space is $\R$. For a population law with mean $\bar m_t$, the policy is Gaussian,
+\begin{align}
+    \pi_t^\theta(\cdot\mid x,m)
+    =
+    \Nc\left(\theta_t^1x+\theta_t^2\bar m_t,\tau^2\right),
+    \qquad
+    \theta_t=(\theta_t^1,\theta_t^2)\in\R^2.
+\end{align}
+The controlled dynamics are
+\begin{align}
+    X_{t+1}
+    =
+    aX_t+bA_t+c\bar m_t+\sigma \varepsilon_{t+1},
+    \qquad
+    \varepsilon_{t+1}\sim\Nc(0,1).
+\end{align}
+The implementation uses rewards equal to the negative of the quadratic cost. Equivalently, validation minimizes
+\begin{align}
+    C_T(\theta)
+    =
+    \E\left[
+        \sum_{t=0}^{T-1}
+        \left(qX_t^2+rA_t^2+\gamma \bar m_t^2\right)
+        +q_TX_T^2+\gamma_T\bar m_T^2
+    \right],
+\end{align}
+and reports the validation reward $-C_T(\theta)$.
+
+\paragraph{Parameters.}
+The baseline configuration is
+\begin{align}
+    T&=20,&
+    \mu_0&=1,&
+    \Sigma_0&=0.25,&
+    a&=0.9,&
+    b&=0.5,&
+    c&=0.05,\\
+    q&=1,&
+    r&=0.1,&
+    \gamma&=5,&
+    q_T&=1,&
+    \gamma_T&=5,&
+    \tau&=0.2,&
+    \sigma&=0.1,&
+    \rho&=1.
+\end{align}
+Policies are initialized at $\theta=0$ and optimized for $10{,}000$ Adam iterations with learning rate $10^{-3}$.
+
+\paragraph{Moment recursion and oracle policy.}
+Because the dynamics are linear and the policy is affine, the law is summarized by its mean and variance. Under the affine perturbation described below, these moments satisfy
+\begin{align}
+    \mu_{t+1}^{\theta,\lambda}
+    &=
+    \left(a+b\theta_t^1+b\theta_t^2+c\right)\mu_t^{\theta,\lambda},
+    \\
+    \Sigma_{t+1}^{\theta,\lambda}
+    &=
+    \left(a+b\theta_t^1\right)^2\Sigma_t^{\theta,\lambda}
+    +
+    \left(b\theta_t^2+c\right)^2
+    \lambda^2\rho^2
+    \left((\mu_t^{\theta,\lambda})^2+1\right)
+    +
+    b^2\tau^2+\sigma^2.
+    \label{eq:lq-moment-recursion}
+\end{align}
+Substituting \eqref{eq:lq-moment-recursion} into the quadratic cost gives an exact $O(T)$ expression for the perturbed objective $C_T^\lambda(\theta)$, and an adjoint recursion gives the exact gradient. These closed-form quantities are used only for validation and estimator diagnostics.
+
+For $\lambda=0$, the optimal policy belongs to the chosen class. Let $P_T=q_T$ and $R_T=q_T+\gamma_T$, and define backward
+\begin{align}
+    P_t
+    &=
+    q+\frac{ra^2P_{t+1}}{r+b^2P_{t+1}},
+    &
+    R_t
+    &=
+    q+\gamma
+    +
+    \frac{r(a+c)^2R_{t+1}}{r+b^2R_{t+1}}.
+\end{align}
+Then the oracle parameters are
+\begin{align}
+    k_t^\star
+    &=
+    -\frac{abP_{t+1}}{r+b^2P_{t+1}},
+    &
+    \ell_t^\star
+    &=
+    -\frac{b(a+c)R_{t+1}}{r+b^2R_{t+1}},
+    &
+    \theta_t^\star
+    &=
+    \left(k_t^\star,\ell_t^\star-k_t^\star\right).
+\end{align}
+
+\paragraph{Perturbation and training protocol.}
+The population argument is perturbed through the affine map
+\begin{align}
+    M_t^{\lambda,\theta}
+    =
+    (1+\lambda\zeta_t)\mu_t^\theta+\lambda\beta_t,
+    \qquad
+    \zeta_t,\beta_t\overset{\mathrm{i.i.d.}}{\sim}\Nc(0,\rho^2).
+\end{align}
+The fixed-scale transport grid is
+\begin{align}
+    \lambda\in\{0.05,0.1,0.2,0.4,0.8\},
+    \qquad
+    \eta=0.85,
+\end{align}
+and adaptive transport starts from $\lambda_0=0.2$, $\eta_0=0.8$. We run both exact-flow and particle-flow transport variants. Exact flow propagates the moment recursion \eqref{eq:lq-moment-recursion}, whereas particle flow estimates the population moments from simulated particles before applying the same estimator.
+
+The reference continuous-state budget uses $B=200$ main trajectories and $n=1$ law-gradient trajectory. REINFORCE is assigned the same simulator budget by increasing its number of trajectories. For transport, the fixed budget is reallocated toward the auxiliary sensitivity estimate, using $n_{\mathrm{law}}=20$ auxiliary trajectories and the corresponding reduced number of main trajectories.
+
+\paragraph{Validation and diagnostics.}
+Every ten iterations, the frozen policy is evaluated with the exact unperturbed objective. We report the validation reward, the learned mean and variance flows, the distance to the Riccati optimizer, and the optimality gap. Since an exact gradient oracle is available, the saved policies are also used for bias, dispersion, mean-square error, cosine-alignment, and perturbation-bias diagnostics. The LQ derivation gives the expected $O(\lambda^2)$ objective and gradient bias, so this benchmark is also used to check whether the empirical transport bias follows the predicted scaling.
+
+\subsection{Mean--Variance Portfolio}
+\label{subsec:mean-variance-portfolio}
+
+We next consider a discrete-time mean--variance portfolio selection problem. As in the LQ benchmark, the relevant moments satisfy closed recursions and the exact perturbed objective is available, but the state is driven by multiplicative asset returns. This makes the example a useful continuous-state test in which the estimator noise comes from financial returns and the population dependence is carried both by the feedback policy and by an explicit running mean-field penalty.
+
+\paragraph{Model.}
+Let $X_t\in\R$ denote the wealth of an investor at time $t$ and let $\alpha_t\in\R$ denote the monetary amount invested in the risky asset, the remainder being held at the deterministic gross risk-free return $s_t>0$. Writing $R_{t+1}$ for the excess return of the risky asset over $[t,t+1]$, with mean $\bar r_t$ and variance $\sigma_{R,t}^2$, the wealth dynamics are
+\begin{align}
+    X_{t+1}=s_tX_t+\alpha_tR_{t+1},
+    \qquad
+    t=0,\ldots,T-1.
+    \label{eq:portfolio-wealth-dynamics}
+\end{align}
+The investor is subject to a precommitment mean--variance criterion on terminal wealth, penalized by a running cost on the aggregate position of the population. With $\mu_t=\E[X_t]$ the population mean, the running and terminal rewards are
+\begin{align}
+    r(x,a,\mu)=-\gamma\mu^2,
+    \qquad
+    g(x,\mu)=x-\chi(x-\mu)^2,
+    \label{eq:portfolio-rewards}
+\end{align}
+where $\chi>0$ is the risk-aversion coefficient and $\gamma\geq0$ is a mean-field penalty. The terminal reward yields the usual mean--variance objective $\E[X_T]-\chi\operatorname{Var}(X_T)$ at the consistent population law, while the running term introduces an explicit dependence on the population mean. In the current benchmark we set $\gamma=2$, so the task contains a genuine population-gradient component in addition to the dependence of the feedback policy on the mean.
+
+\paragraph{Parameters.}
+We use the baseline configuration
+\begin{align}
+    T=10,\quad X_0\sim\Nc(1,0.04),\quad s_t=1,\quad \bar r_t=0.02,\quad \sigma_{R,t}=0.08,\quad \chi=10,\quad \tau_t=0.02,\quad \rho=1,
+\end{align}
+for $t=0,\ldots,T-1$, together with $\gamma=2$. The main run uses normally distributed excess returns. The implementation also allows a centered and rescaled Student distribution with five degrees of freedom, which can be used as a robustness check without changing the moment oracle, since the recursions depend only on the first two moments of the returns. The policy parameters are initialized at $k_t=\ell_t=0$.
+
+\paragraph{Policy parametrization and moment recursions.}
+Since the unconstrained optimizer of the mean--variance problem is affine in the state and in the population mean, we use the direct time-dependent parametrization $\theta=((k_t,\ell_t))_{t=0}^{T-1}$ with
+\begin{align}
+    \alpha_t^\theta = k_t\left(X_t-\mu_t\right)+\ell_t+\tau_t\varepsilon_t,
+    \qquad
+    \varepsilon_t\sim\Nc(0,1),
+    \label{eq:portfolio-policy}
+\end{align}
+where $\tau_t>0$ is a fixed exploration scale. Using a neural network is unnecessary here, and the exact optimizer belongs to the chosen class, which isolates the error of the gradient estimator from function-approximation error.
+
+Because the dynamics are linear and the policy is affine, the population law is characterized by its first two moments. Writing $\Sigma_t=\operatorname{Var}(X_t)$ and $h_t=\bar r_t^2+\sigma_{R,t}^2$, the moments propagate as
+\begin{align}
+    \mu_{t+1}^{\theta,\lambda}&=s_t\mu_t^{\theta,\lambda}+\bar r_t\ell_t, \label{eq:portfolio-mean-recursion}\\
+    \Sigma_{t+1}^{\theta,\lambda}&=A_t(k_t)\Sigma_t^{\theta,\lambda}+h_t\tau_t^2+\sigma_{R,t}^2\ell_t^2+h_tk_t^2\lambda^2\rho^2\left((\mu_t^{\theta,\lambda})^2+1\right),
+\end{align}
+with $A_t(k)=s_t^2+2s_t\bar r_tk+h_tk^2$. The perturbation is centered, so the mean recursion does not depend on $\lambda$, and all perturbation terms enter at order $\lambda^2$. The exact perturbed objective follows:
+\begin{align}
+    J^\lambda(\theta)
+    =
+    -\gamma\sum_{t=0}^{T-1}\left[(\mu_t^{\theta,\lambda})^2+\lambda^2\rho^2\left((\mu_t^{\theta,\lambda})^2+1\right)\right]
+    +\mu_T^{\theta,\lambda}
+    -\chi\left[\Sigma_T^{\theta,\lambda}+\lambda^2\rho^2\left((\mu_T^{\theta,\lambda})^2+1\right)\right].
+    \label{eq:portfolio-perturbed-objective}
+\end{align}
+This gives $J^\lambda(\theta)$ in $O(T)$ for every $\theta$ and every perturbation level, and an adjoint recursion gives the exact gradient $\nabla_\theta J^\lambda(\theta)$ at the same cost. Both are used only for validation and diagnostics.
+
+The optimal $k_t$ is unaffected by the running penalty, since $k_t$ enters only through the variance recursion and $\Sigma_T$ is increasing in each $A_t$:
+\begin{align}
+    k_t^\star=-\frac{s_t\bar r_t}{h_t}.
+    \label{eq:portfolio-optimal-k}
+\end{align}
+For $\gamma=0$ the remaining component is available in closed form,
+\begin{align}
+    \ell_t^\star=\frac{\bar r_t}{2\chi\sigma_{R,t}^2}\prod_{j=t+1}^{T-1}\frac{1}{s_j(1-B_j)},
+    \qquad
+    B_j=\frac{\bar r_j^2}{h_j},
+    \label{eq:portfolio-optimal-l}
+\end{align}
+whereas for $\gamma>0$ the objective remains concave and quadratic in $\ell$, so $\nabla_\ell J^0$ is affine and $\ell^\star$ is obtained by an exact linear solve.
+
+\paragraph{Perturbation scheme.}
+The population argument is perturbed by the affine mean perturbation
+\begin{align}
+    M_t^{\lambda,\theta}=(1+\lambda\zeta_t)\mu_t^\theta+\lambda\beta_t,
+    \qquad
+    \zeta_t,\beta_t\overset{\mathrm{i.i.d.}}{\sim}\Nc(0,\rho^2),
+\end{align}
+independently of the initial wealth, the asset returns, and the policy noises. The fixed-scale grid is
+\begin{align}
+    \lambda\in\{0.025,0.05,0.1,0.2,0.4\},
+    \qquad
+    \eta=0.85,
+\end{align}
+the smaller radii reflecting the scale of the wealth process.
+
+\paragraph{Training protocol.}
+The initial law is fixed at $X_0\sim\Nc(1,0.04)$, so no randomization of the initial condition is applied. Policies are optimized with Adam for $10{,}000$ iterations with learning rate $10^{-2}$. The reference budget uses $B=500$ main trajectories and $n=1$ law-gradient trajectory, giving a per-update cost of $C=BT+2nT(T+1)/2=5{,}110$ simulated transitions, and REINFORCE and transport are assigned the same budget.
+
+As in the LQ benchmark, the fixed transport budget is deliberately reallocated toward the auxiliary law-gradient estimate. For the portfolio runs we use $n_{\mathrm{law}}=200$ auxiliary trajectories and reduce the number of main trajectories accordingly, at the same total transition budget. The fixed-scale runs use exact moment flow, and adaptive transport starts from $\lambda_0=0.2$, $\eta_0=0.8$.
+
+\paragraph{Validation and diagnostics.}
+Every ten iterations the policy is frozen and evaluated with the exact objective \eqref{eq:portfolio-perturbed-objective} at $\lambda=0$, so the reported validation reward carries no trajectory noise. Policy recovery is measured by the distance to \eqref{eq:portfolio-optimal-k}--\eqref{eq:portfolio-optimal-l} and by the optimality gap $J^0(\theta^\star)-J^0(\theta)$. We also record the learned mean and variance flows $(\mu_t^\theta,\Sigma_t^\theta)_{t=0}^T$.
+
+Because an exact gradient oracle is available, this benchmark carries the estimator diagnostics of Section~\ref{subsec:experimentation-protocol}: at frozen policies we compare the Monte Carlo gradient with the oracle and report relative bias, coordinatewise mean-square error, and cosine alignment; we compare $\nabla_\theta J^\lambda$ with $\nabla_\theta J^0$ to exhibit the quadratic perturbation bias against the growth of the estimator variance as $\lambda\downarrow0$; and we measure the size of the transport correction relative to the pure policy-score term.
+
+
+\subsection{Controlled Noisy Kuramoto Synchronization}
+\label{subsec:controlled-noisy-kuramoto}
+
+We finally consider a controlled noisy Kuramoto model \cite{sinigaglia_braghin_berman_kuramoto,chen_wang_zhidkova_kuramoto}. This benchmark is qualitatively different from the previous continuous examples: the state is an angle, the population law is not summarized by a Gaussian moment recursion, and the policy is represented by a neural network. It is therefore used as a particle-flow test of the continuous transport estimator in a genuinely nonlinear mean-field system.
+
+\paragraph{Model.}
+Let $X_t\in\R$ denote the lifted phase of an oscillator. The relevant population statistic is the first Fourier mode
+\begin{align}
+    m_t=(c_t,s_t)
+    =
+    \left(
+        \E[\cos X_t],
+        \E[\sin X_t]
+    \right),
+    \qquad
+    R_t=\|m_t\|_2,
+\end{align}
+where $R_t$ is the Kuramoto order parameter. Given an action $A_t\in\R$, the Euler discretization of the controlled dynamics is
+\begin{align}
+    X_{t+1}
+    =
+    X_t
+    +
+    \Delta t
+    \left[
+        K\left(s_t\cos X_t-c_t\sin X_t\right)
+        +
+        A_t
+    \right]
+    +
+    \sqrt{2\nu\Delta t}\,\varepsilon_{t+1},
+    \qquad
+    \varepsilon_{t+1}\sim\Nc(0,1).
+\end{align}
+The interaction term is the usual mean-field Kuramoto drift written in terms of the empirical sine and cosine moments.
+
+The running reward is the negative of a control and synchronization cost,
+\begin{align}
+    r_t(x,m,a)
+    =
+    -\Delta t
+    \left[
+        w_{\mathrm{sync}}
+        \left(1-\cos(x)c-\sin(x)s\right)
+        +
+        w_{\mathrm{lock}}
+        \left(1-\cos(x-x_\star)\right)
+        +
+        w_{\mathrm{act}}a^2
+        +
+        w_{\mathrm{ord}}(R-r_\star)^2
+    \right],
+\end{align}
+where $m=(c,s)$ and $R=\|m\|_2$. The terminal reward has the same structure without the factor $\Delta t$, with terminal weights for the synchronization, phase-locking, and order-parameter terms. The individual synchronization and phase-locking terms encourage alignment, while the order-parameter term can penalize excessive synchronization by steering $R_t$ towards a target $r_\star<1$.
+
+\paragraph{Parameters and policy.}
+The baseline configuration is
+\begin{align}
+    T&=20,&
+    \Delta t&=0.1,&
+    K&=0.8,&
+    \nu&=0.08,&
+    x_\star&=0,&
+    r_\star&=0.6,\\
+    w_{\mathrm{sync}}&=1,&
+    w_{\mathrm{lock}}&=0.5,&
+    w_{\mathrm{act}}&=0.02,&
+    w_{\mathrm{ord}}&=10,&
+    \tau&=0.25,&
+    \rho&=1.
+\end{align}
+The terminal weights are $5$ for synchronization, $2$ for phase locking, and $50$ for the order-parameter penalty. Initial phases are sampled uniformly on $[-\pi,\pi]$.
+
+The policy is Gaussian with fixed exploration variance,
+\begin{align}
+    \pi_t^\theta(\cdot\mid x,m)
+    =
+    \Nc\left(u_\theta(t,x,m),\tau^2\right).
+\end{align}
+The mean $u_\theta$ is a two-hidden-layer tanh network with hidden width $64$ and bounded output $2\tanh(\cdot)$. Its inputs are normalized time, $\cos x$, $\sin x$, the two law features $(c,s)$, the Kuramoto interaction field, the order parameter, and trigonometric features of the distance to the target phase. This parametrization keeps the policy periodic in the phase while still exposing the population statistic to the network.
+
+\paragraph{Perturbation and training protocol.}
+Transport acts on the law feature $m_t=(c_t,s_t)$ rather than on the full empirical measure. The perturbed feature is
+\begin{align}
+    M_t^{\lambda,\theta}
+    =
+    m_t^\theta+\lambda\beta_t,
+    \qquad
+    \beta_t\sim\Nc(0,\rho^2I_2).
+\end{align}
+Since valid first Fourier modes belong to the closed unit disk, the implementation projects the perturbed feature back to a disk of radius $0.995$ when necessary. The transport score is computed from the unprojected Gaussian perturbation,
+\begin{align}
+    S_{\mathrm{tr},t}^{\lambda,\theta}
+    =
+    \left\langle
+        \frac{M_t^{\lambda,\theta}-m_t^\theta}{\lambda^2\rho^2},
+        \nabla_\theta m_t^\theta
+    \right\rangle,
+\end{align}
+with the corresponding auxiliary estimator used for $\nabla_\theta m_t^\theta$. The projection can introduce a small additional perturbation bias near highly synchronized states; this is monitored in the gradient diagnostics.
+
+The benchmark is run with particle flow throughout. The fixed-scale transport grid is
+\begin{align}
+    \lambda\in\{0.1,0.2,0.4\},
+    \qquad
+    \eta=0.85,
+\end{align}
+and adaptive transport starts from $\lambda_0=0.2$, $\eta_0=0.8$. Policies are optimized for $3{,}000$ Adam iterations with learning rate $10^{-3}$. The reference continuous-state budget uses $B=500$ main trajectories and $n_{\mathrm{law}}=20$ law-gradient trajectories. For fixed-scale transport, the budget is reallocated toward the auxiliary law-gradient estimate with $n_{\mathrm{law}}=50$, and the number of main trajectories is reduced accordingly.
+
+\paragraph{Validation and diagnostics.}
+Validation is performed every ten iterations with a fixed validation seed and a larger validation population. We report the validation reward, the learned order-parameter trajectory, the phase-locking cost, the cumulative control effort, and the final empirical phase distribution. Because no closed-form gradient oracle is available, estimator diagnostics use independent particle rollouts and common-random-number pathwise gradients. In addition to the main configuration $w_{\mathrm{ord}}=10$, we also consider the controlled variant $w_{\mathrm{ord}}=0$ in the correction-alignment analysis below. This switches off the explicit population-level order penalty while keeping the oscillator dynamics and policy class unchanged.
+
+
+\section{Mean-field correction diagnostic}
+\label{sec:correction-alignment}
+
+The benchmarks above do not order the estimators consistently. On some, the transport estimator improves on REINFORCE by a wide margin; on others, REINFORCE is at least as good at a fraction of the cost, even though the mean-field structure is present in both cases. This section isolates the quantity that separates the two regimes. The conclusion is that the relevant question is not whether the population-flow term is large, but whether it is not collinear with the term REINFORCE already computes.
+
+\paragraph{Two gradients.}
+REINFORCE treats the population argument as exogenous: it forms $\nabla_\theta\log\pi_t^\theta$ along sampled trajectories and never differentiates the law that is supplied to the policy, the reward, or the transition. Its target is therefore the partial derivative of the objective at a frozen population flow, whereas the transport estimator targets the total derivative. When the environment admits a differentiable evaluation path, the exact population recursion on the finite-state benchmarks, and a pathwise rollout under common random numbers on the continuous ones, both quantities are directly computable. Writing $\mu^\theta$ for the population flow, define
+\begin{align}
+    G_{\mathrm{full}}(\theta) &= \nabla_\theta J\!\left(\theta,\mu^\theta\right), &
+    G_{\mathrm{det}}(\theta) &= \nabla_\theta J\!\left(\theta,\mu\right)\Big|_{\mu=\mu^\theta},
+    \label{eq:two-gradients}
+\end{align}
+where the second expression detaches $\mu$ from the computational graph before differentiating, so that the population channel is suppressed. Their difference $G_{\mathrm{full}}-G_{\mathrm{det}}$ is exactly the mean-field correction that the transport estimator is built to recover, and $G_{\mathrm{det}}$ is what REINFORCE estimates. Both are evaluation-only quantities: they use an exact or pathwise oracle and are never available to the training algorithms.
+
+\paragraph{Magnitude is the wrong measure.}
+A natural summary is the relative size of the correction, $\|G_{\mathrm{full}}-G_{\mathrm{det}}\|/\|G_{\mathrm{full}}\|$, and it is the quantity reported by the correction diagnostics of Section~\ref{subsec:experimentation-protocol}. It is, however, not predictive. All the policies here are optimized with Adam, whose update is invariant to a positive rescaling of the gradient. If the correction is parallel to $G_{\mathrm{det}}$, then
+\begin{align}
+    G_{\mathrm{full}}=(1+c)\,G_{\mathrm{det}},\qquad c>-1,
+\end{align}
+and the two estimators induce the same update direction no matter how large $c$ is. A correction can account for half of the gradient norm and still be worth nothing. What changes the optimization path is the component of the correction orthogonal to $G_{\mathrm{det}}$, which is captured by the alignment
+\begin{align}
+    \varrho(\theta)
+    =
+    \frac{\left\langle G_{\mathrm{full}}(\theta),\,G_{\mathrm{det}}(\theta)\right\rangle}
+    {\left\|G_{\mathrm{full}}(\theta)\right\|\left\|G_{\mathrm{det}}(\theta)\right\|}.
+    \label{eq:correction-alignment}
+\end{align}
+Values close to $+1$ mean that REINFORCE is directionally correct and the correction only rescales the step; values at or below zero mean that REINFORCE ascends a direction that is not an ascent direction for the true objective.
+
+\paragraph{Measured alignment.}
+We evaluate \eqref{eq:correction-alignment} at a common reference policy, obtained by running REINFORCE for $300$ iterations from the benchmark initialization, so that the diagnostic is read away from the initial point but before any estimator has converged. The procedure is repeated over five independent reference policies, each with its own policy initialization and its own common random numbers for the pathwise evaluation; we report the mean and the standard deviation across replications. Table~\ref{tab:correction-alignment} reports the result together with the ordering of the estimators observed in the training experiments. All values are reproduced by \texttt{scripts/correction\_alignment.py}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrl}
+\toprule
+Benchmark & $\|G_{\mathrm{full}}\|$ & $\|G_{\mathrm{det}}\|$ & $\varrho$ & Observed ordering \\
+\midrule
+Two-state ($T=5$)          &  8.714 & 0.872 & $-1.000\pm0.000$ & transport, MF $\gg$ REINFORCE \\
+Cybersecurity              &  0.003 & 0.003 & $+1.000\pm0.000$ & REINFORCE $\approx$ MF \\
+Distribution planning      &  0.029 & 0.001 & $+0.092\pm0.075$ & MF $\gg$ REINFORCE \\
+Targeted advertising       &  0.002 & 0.005 & $-0.921\pm0.023$ & MF, transport $>$ REINFORCE \\
+Linear--quadratic          & 23.156 & 4.657 & $+0.985\pm0.000$ & REINFORCE $>$ transport \\
+Portfolio ($\gamma=2$)     &  1.357 & 0.083 & $-0.196\pm0.007$ & transport $>$ REINFORCE \\
+Kuramoto                   &  1.426 & 0.813 & $+0.991\pm0.013$ & REINFORCE $>$ transport \\
+\bottomrule
+\end{tabular}
+\caption{Correction alignment \eqref{eq:correction-alignment}, as mean and standard deviation over five independent reference policies, together with the observed ordering of the estimators. The alignment separates the benchmarks on which the transport correction changes the optimization outcome from those on which it does not.}
+\label{tab:correction-alignment}
+\end{table}
+
+The measured alignments fall into two clearly separated groups, and the grouping agrees with the observed ordering on every benchmark. The linear--quadratic, cybersecurity and Kuramoto problems have $\varrho\geq0.985$; on all three, REINFORCE matches or beats the transport estimator despite a correction that is far from negligible in norm. On the linear--quadratic benchmark the correction accounts for $80\%$ of the gradient, and on the Kuramoto benchmark for $43\%$, yet in both cases it is almost exactly parallel to the policy-score term and therefore invisible to a scale-invariant optimizer. Every remaining benchmark has $\varrho\leq0.092$, and on each of them the estimators that use the population-flow derivative outperform REINFORCE. No benchmark lies between these two groups, the gap spanning almost the whole interval from $0.092$ to $0.985$.
+
+It is the distance from $+1$, rather than the sign of $\varrho$, that carries the information. Distribution planning is the instructive case: its alignment is positive, $\varrho=+0.092\pm0.075$, yet REINFORCE stalls near the uniform law while the logit-perturbed estimator converges. A correction that is nearly orthogonal to the policy-score term reorients the update just as effectively as one that opposes it, so a near-zero alignment is as informative as a negative one. Only $\varrho\approx+1$ certifies that the population channel is redundant.
+
+\paragraph{Controlled pairs.}
+Two of the benchmarks admit a coefficient that switches the explicit population dependence on and off while leaving the dynamics unchanged, which turns the observation above into a controlled comparison. In the portfolio problem, the market-impact coefficient $\gamma$ multiplies the only reward term that depends explicitly on the population. In the Kuramoto problem, the weight $w_{\mathrm{ord}}$ multiplies the population-level penalty steering the order parameter towards a target level of synchronization.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llrrrl}
+\toprule
+Benchmark & Setting & $\|G_{\mathrm{full}}\|$ & $\|G_{\mathrm{det}}\|$ & $\varrho$ & Observed ordering \\
+\midrule
+Portfolio & $\gamma=0$   & 0.083 & 0.083 & $+1.000\pm0.000$ & REINFORCE $>$ transport \\
+Portfolio & $\gamma=2$   & 1.357 & 0.083 & $-0.196\pm0.007$ & transport $>$ REINFORCE \\
+Kuramoto  & $w_{\mathrm{ord}}=0$  &  1.426 & 0.813 & $+0.991\pm0.013$ & REINFORCE $>$ transport \\
+Kuramoto  & $w_{\mathrm{ord}}=10$ & 13.645 & 3.367 & $-0.826\pm0.286$ & all estimators degrade \\
+\bottomrule
+\end{tabular}
+\caption{Switching the explicit population dependence on reverses the sign of $\varrho$ with the dynamics held fixed. On the portfolio benchmark the ordering of the estimators reverses with it. On the Kuramoto benchmark it does not: at $w_{\mathrm{ord}}=10$ the population penalty dominates the objective and every estimator, REINFORCE included, degrades monotonically from the first validation onwards, so the alignment is reversed but the benchmark is no longer informative. The reported Kuramoto experiments therefore use $w_{\mathrm{ord}}=0$, and the coefficient is retained only for this ablation.}
+\label{tab:correction-alignment-ablation}
+\end{table}
+
+The portfolio pair is the sharpest. At $\gamma=0$ the terminal reward depends on the population only through the centered variable $x-\mu$, so that
+\begin{align}
+    \frac{\partial}{\partial\mu}\,\E\!\left[-\chi(X-\mu)^2\right]
+    =
+    2\chi\left(\E[X]-\mu\right)
+    =
+    0
+\end{align}
+at the consistent law, for every risk-aversion level. The measured gradients confirm that the correction vanishes, $\|G_{\mathrm{full}}\|=\|G_{\mathrm{det}}\|=0.083$ with $\varrho=+1.000$ to three decimals and a residual correction fraction of $0.004$ across all five replications, so REINFORCE is unbiased on this instance and the transport estimator can only add variance. This is precisely what the training experiments show: at $\gamma=0$ the transport estimator ends below its own initialization while REINFORCE recovers $42\%$ of the available objective range, and at $\gamma=2$ the ordering reverses.
+
+This also explains why the correction-magnitude diagnostic is misleading. Measured on the transport estimator itself, the correction accounts for $83\%$ of the gradient at $\gamma=0$, even though the exact correction is zero. That $83\%$ is entirely Monte Carlo noise injected by the auxiliary sensitivity estimate, which is a direct statement of the cost the estimator pays when there is no signal to recover.
+
+\paragraph{Practical use and limitations.}
+The alignment \eqref{eq:correction-alignment} costs two automatic-differentiation passes over a single deterministic evaluation and requires no gradient oracle in closed form, so it can be computed on any benchmark admitting a differentiable evaluation path before committing to a full training grid. It is, however, a local quantity evaluated at reference policies obtained after a fixed number of REINFORCE iterations, and nothing guarantees that it is constant along an optimization trajectory. Across the five replications the group membership never changes, but the dispersion is uneven. Cybersecurity and targeted advertising are stable to within $0.023$ despite gradient norms of order $10^{-3}$, whereas the Kuramoto benchmark is the least stable entry in Table~\ref{tab:correction-alignment}, with $\varrho$ ranging from $-1.000$ to $-0.325$ over the replications; its sign is nonetheless negative throughout. Finally, the agreement documented here is an observation over seven benchmarks and two controlled pairs, not a theorem: a negative alignment indicates that the correction can change the optimization path, but it does not by itself guarantee that a model-free estimator of that correction will have low enough variance to exploit it. The portfolio results at $\gamma=2$, where the transport estimator improves on REINFORCE only after the auxiliary sample size is raised from $1$ to $200$, illustrate that the two requirements are separate.
