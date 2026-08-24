@@ -311,7 +311,7 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
         self._moment_eta = 0.0
         self._second_lambda = 0.0
         self._second_eta = 0.0
-        self._controller_steps = 0
+        self._controller_steps = {"lambda": 0, "eta": 0}
 
     @property
     def lambda_(self):
@@ -361,13 +361,16 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
         second_name = f"_second_{name}"
         rho_name = f"_rho_{name}"
 
+        self._controller_steps[name] += 1
+        steps = self._controller_steps[name]
+
         moment = beta1 * getattr(self, moment_name) + (1.0 - beta1) * signal
         second = beta2 * getattr(self, second_name) + (1.0 - beta2) * signal**2
         setattr(self, moment_name, moment)
         setattr(self, second_name, second)
 
-        corrected_moment = moment / (1.0 - beta1**self._controller_steps)
-        corrected_second = second / (1.0 - beta2**self._controller_steps)
+        corrected_moment = moment / (1.0 - beta1**steps)
+        corrected_second = second / (1.0 - beta2**steps)
         rho = getattr(self, rho_name) - step_size * corrected_moment / (corrected_second**0.5 + eps)
         setattr(self, rho_name, rho)
 
@@ -471,12 +474,21 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
         mean_delta_lambda = delta_lambda.mean(dim=0)
         mean_delta_eta = delta_eta.mean(dim=0)
 
-        discrepancy_lambda = (
+        # Debiased estimates of ||E[Delta]||^2. A non-positive value does not mean
+        # the bias is zero; it means the replications cannot resolve it, since the
+        # variance correction exceeds the squared mean. Treating that case as zero
+        # bias makes the controller read "variance dominates" and drive the scale
+        # to its upper bound, so the two cases are tracked separately below.
+        raw_lambda = (
             mean_delta_lambda.norm().square() - self._covariance_trace(delta_lambda) / config.adaptive_replications
-        ).clamp_min(0.0)
-        discrepancy_eta = (
+        )
+        raw_eta = (
             mean_delta_eta.norm().square() - self._covariance_trace(delta_eta) / config.adaptive_replications
-        ).clamp_min(0.0)
+        )
+        resolved_lambda = bool((raw_lambda > 0.0).item())
+        resolved_eta = bool((raw_eta > 0.0).item())
+        discrepancy_lambda = raw_lambda.clamp_min(0.0)
+        discrepancy_eta = raw_eta.clamp_min(0.0)
         bias_lambda = discrepancy_lambda / (1.0 - effective_c_lambda**config.bias_order_lambda) ** 2
         bias_eta = discrepancy_eta / (1.0 - effective_c_eta**config.bias_order_eta) ** 2
         variance = self._covariance_trace(g_pp)
@@ -502,6 +514,7 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
             and lambda_cosine < config.direction_cosine_min
         ):
             z_lambda = max(z_lambda, config.direction_z)
+            resolved_lambda = True
         if (
             eta_high.norm().item() > config.direction_norm_min
             and eta_low.norm().item() > config.direction_norm_min
@@ -509,10 +522,12 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
             and eta_cosine < config.direction_cosine_min
         ):
             z_eta = max(z_eta, config.direction_z)
+            resolved_eta = True
 
-        self._controller_steps += 1
-        self._controller_update("lambda", z_lambda)
-        self._controller_update("eta", z_eta)
+        if resolved_lambda:
+            self._controller_update("lambda", z_lambda)
+        if resolved_eta:
+            self._controller_update("eta", z_eta)
         self._update_scales_from_logits()
 
         return {
@@ -524,6 +539,8 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
             "adaptive_eta_contracted": eta_minus,
             "adaptive_z_lambda": z_lambda,
             "adaptive_z_eta": z_eta,
+            "adaptive_lambda_resolved": resolved_lambda,
+            "adaptive_eta_resolved": resolved_eta,
             "adaptive_bias_lambda": float(bias_lambda.detach().cpu()),
             "adaptive_bias_eta": float(bias_eta.detach().cpu()),
             "adaptive_variance": float(variance.detach().cpu()),
@@ -549,6 +566,8 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
             "adaptive_lambda_contracted": [],
             "adaptive_eta_contracted": [],
             "adaptive_z_lambda": [],
+            "adaptive_lambda_resolved": [],
+            "adaptive_eta_resolved": [],
             "adaptive_z_eta": [],
             "adaptive_bias_lambda": [],
             "adaptive_bias_eta": [],
@@ -1218,7 +1237,7 @@ class AdaptiveContinuousTransport(ContinuousTransport):
         self._moment_eta = 0.0
         self._second_lambda = 0.0
         self._second_eta = 0.0
-        self._controller_steps = 0
+        self._controller_steps = {"lambda": 0, "eta": 0}
 
     @property
     def lambda_(self):
@@ -1239,13 +1258,16 @@ class AdaptiveContinuousTransport(ContinuousTransport):
         second_name = f"_second_{name}"
         rho_name = f"_rho_{name}"
 
+        self._controller_steps[name] += 1
+        steps = self._controller_steps[name]
+
         moment = beta1 * getattr(self, moment_name) + (1.0 - beta1) * signal
         second = beta2 * getattr(self, second_name) + (1.0 - beta2) * signal**2
         setattr(self, moment_name, moment)
         setattr(self, second_name, second)
 
-        corrected_moment = moment / (1.0 - beta1**self._controller_steps)
-        corrected_second = second / (1.0 - beta2**self._controller_steps)
+        corrected_moment = moment / (1.0 - beta1**steps)
+        corrected_second = second / (1.0 - beta2**steps)
         rho = getattr(self, rho_name) - step_size * corrected_moment / (corrected_second**0.5 + eps)
         setattr(self, rho_name, rho)
 
@@ -1325,14 +1347,21 @@ class AdaptiveContinuousTransport(ContinuousTransport):
         mean_delta_lambda = delta_lambda.mean(dim=0)
         mean_delta_eta = delta_eta.mean(dim=0)
 
-        discrepancy_lambda = (
+        # See AdaptiveDiscreteTransport.adaptive_diagnostic: a non-positive debiased
+        # estimate means the bias is unresolved at this replication count, not that
+        # it is zero, and the two must not be conflated by the controller.
+        raw_lambda = (
             mean_delta_lambda.norm().square()
             - AdaptiveDiscreteTransport._covariance_trace(delta_lambda) / config.adaptive_replications
-        ).clamp_min(0.0)
-        discrepancy_eta = (
+        )
+        raw_eta = (
             mean_delta_eta.norm().square()
             - AdaptiveDiscreteTransport._covariance_trace(delta_eta) / config.adaptive_replications
-        ).clamp_min(0.0)
+        )
+        resolved_lambda = bool((raw_lambda > 0.0).item())
+        resolved_eta = bool((raw_eta > 0.0).item())
+        discrepancy_lambda = raw_lambda.clamp_min(0.0)
+        discrepancy_eta = raw_eta.clamp_min(0.0)
         bias_lambda = discrepancy_lambda / (1.0 - effective_c_lambda**config.bias_order_lambda) ** 2
         bias_eta = discrepancy_eta / (1.0 - effective_c_eta**config.bias_order_eta) ** 2
         variance = AdaptiveDiscreteTransport._covariance_trace(g_pp)
@@ -1372,6 +1401,7 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             and lambda_cosine < config.direction_cosine_min
         ):
             z_lambda = max(z_lambda, config.direction_z)
+            resolved_lambda = True
         if (
             eta_high.norm().item() > config.direction_norm_min
             and eta_low.norm().item() > config.direction_norm_min
@@ -1379,10 +1409,12 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             and eta_cosine < config.direction_cosine_min
         ):
             z_eta = max(z_eta, config.direction_z)
+            resolved_eta = True
 
-        self._controller_steps += 1
-        self._controller_update("lambda", z_lambda)
-        self._controller_update("eta", z_eta)
+        if resolved_lambda:
+            self._controller_update("lambda", z_lambda)
+        if resolved_eta:
+            self._controller_update("eta", z_eta)
         self._update_scales_from_logits()
 
         return {
@@ -1394,6 +1426,8 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             "adaptive_eta_contracted": eta_minus,
             "adaptive_z_lambda": z_lambda,
             "adaptive_z_eta": z_eta,
+            "adaptive_lambda_resolved": resolved_lambda,
+            "adaptive_eta_resolved": resolved_eta,
             "adaptive_bias_lambda": float(bias_lambda.detach().cpu()),
             "adaptive_bias_eta": float(bias_eta.detach().cpu()),
             "adaptive_variance": float(variance.detach().cpu()),
@@ -1419,6 +1453,8 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             "adaptive_lambda_contracted": [],
             "adaptive_eta_contracted": [],
             "adaptive_z_lambda": [],
+            "adaptive_lambda_resolved": [],
+            "adaptive_eta_resolved": [],
             "adaptive_z_eta": [],
             "adaptive_bias_lambda": [],
             "adaptive_bias_eta": [],

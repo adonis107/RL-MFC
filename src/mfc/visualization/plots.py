@@ -14,9 +14,20 @@ STATE_FLOW_BENCHMARKS = {
 
 
 def state_flow_plot_horizon(metadata):
+    # Cybersecurity is trained on short episodes (T=3) but its reference flow is
+    # reported over the full validation episode, T_val steps of length dt. The
+    # benchmark values are the state probabilities at the final time step.
     if metadata["env"] == "cybersecurity":
-        return min(10, metadata["env_config"].get("T_val", metadata["horizon"]))
+        return metadata["env_config"].get("T_val", metadata["horizon"])
     return metadata["horizon"]
+
+
+def state_flow_time_axis(metadata, n_points):
+    """Step index, converted to physical time where the environment has a dt."""
+    step = metadata["env_config"].get("dt")
+    if step is None:
+        return list(range(n_points)), "time"
+    return [index * step for index in range(n_points)], "time"
 
 
 def use_symlog_validation_axis(ax, values, threshold_ratio=1_000.0):
@@ -164,12 +175,13 @@ def plot_state_flow(run, ax=None, save_path=None):
 
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 4.5))
+    times, x_label = state_flow_time_axis(metadata, len(df))
     for label in labels:
-        ax.plot(df["time"], df[label], label=label)
+        ax.plot(times, df[label], label=label)
     for label, value in STATE_FLOW_BENCHMARKS.get(metadata["env"], {}).items():
         if label in labels:
             ax.axhline(value, linestyle="--", linewidth=1.2, alpha=0.75, label=f"{label} benchmark")
-    ax.set_xlabel("time")
+    ax.set_xlabel(x_label)
     ax.set_ylabel("state probability")
     ax.legend(frameon=False)
     ax.grid(alpha=0.25)
