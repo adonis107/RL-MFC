@@ -11,6 +11,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 
 from mfc.visualization import (
+    adaptive_schedule_dataframe,
     advertising_policy_error_table,
     discrete_transport_tv_bound_table,
     gradient_diagnostics,
@@ -18,6 +19,7 @@ from mfc.visualization import (
     flow_dataframe,
     load_runs,
     objective_table,
+    plot_adaptive_schedule,
     plot_advertising_diagnostics,
     plot_distribution_comparison,
     plot_flow_comparison,
@@ -236,6 +238,18 @@ def make_standard_outputs(
             rows.append(table)
         if rows:
             save_table(pd.concat(rows, ignore_index=True), output_dir / "moment_flows.csv")
+
+    adaptive = adaptive_schedule_dataframe(runs)
+    if not adaptive.empty:
+        save_table(adaptive, output_dir / "adaptive_schedule.csv")
+        for (horizon, flow), _ in adaptive.groupby(["horizon", "flow"]):
+            plot_adaptive_schedule(
+                runs,
+                env=env,
+                horizon=horizon,
+                flow=flow,
+                save_path=output_dir / f"adaptive_schedule_T_{horizon}_{flow}.png",
+            )
 
     for run in representative_plot_runs(runs):
         metadata = run["metadata"]

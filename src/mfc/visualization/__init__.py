@@ -7,6 +7,7 @@ from .flows import (
     learned_flow,
 )
 from .io import (
+    adaptive_schedule_dataframe,
     best_runs_by_label,
     load_env_and_policy,
     load_runs,
@@ -15,6 +16,7 @@ from .io import (
     validation_dataframe,
 )
 from .plots import (
+    plot_adaptive_schedule,
     plot_advertising_diagnostics,
     plot_distribution_comparison,
     plot_flow_comparison,

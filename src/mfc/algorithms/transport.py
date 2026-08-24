@@ -11,6 +11,17 @@ from .reinforce import exact_continuous_validation_objective
 from .timing import synchronized_time
 
 
+_SAMPLE_TIME_ARGUMENT = {}
+
+
+def sample_accepts_time(sample):
+    """Cache whether an environment's sample method takes a time argument."""
+    function = getattr(sample, "__func__", sample)
+    if function not in _SAMPLE_TIME_ARGUMENT:
+        _SAMPLE_TIME_ARGUMENT[function] = "t" in inspect.signature(sample).parameters
+    return _SAMPLE_TIME_ARGUMENT[function]
+
+
 @dataclass(frozen=True)
 class DiscreteTransportConfig:
     n_train: int | None = None
@@ -836,8 +847,7 @@ class ContinuousTransport:
         return self.flatten_grads(grads)
 
     def sample_next_state(self, t, state, law, action, generator):
-        signature = inspect.signature(self.env.sample)
-        if "t" in signature.parameters:
+        if sample_accepts_time(self.env.sample):
             return self.env.sample(state, self.law_argument(law), action, generator, t=t).reshape_as(state)
         return self.env.sample(state, self.law_argument(law), action, generator).reshape_as(state)
 
@@ -935,8 +945,7 @@ class ContinuousTransport:
             return self.env.policy(self.policy, self.policy_time(t), states, self.law_argument(law)).sample()
 
     def sample_next_states_for_population(self, t, states, law, actions, generator):
-        signature = inspect.signature(self.env.sample)
-        if "t" in signature.parameters:
+        if sample_accepts_time(self.env.sample):
             return self.env.sample(states, self.law_argument(law), actions, generator, t=t)
         return self.env.sample(states, self.law_argument(law), actions, generator)
 
@@ -955,6 +964,33 @@ class ContinuousTransport:
             return self.env.state_law_features(states)
         return torch.stack([states, states.square()], dim=-1)
 
+    def batched_log_prob_gradients(self, action_log_probs, features, feature_dim):
+        """Score gradients of the law features, batched over target time and feature.
+
+        Entry [target_t - 1, feature_index] is the gradient of the log-probabilities
+        up to target_t weighted by that feature at target_t, which is what each
+        sensitivity estimate needs. One vmapped backward pass replaces the
+        horizon * feature_dim sequential passes over the same graph.
+        """
+        log_probs = torch.stack(action_log_probs)
+        n_outputs = self.horizon * feature_dim
+        weights = torch.zeros(n_outputs, *log_probs.shape, dtype=self.env.dtype, device=self.env.device)
+        for target_t in range(1, self.horizon + 1):
+            for feature_index in range(feature_dim):
+                weights[(target_t - 1) * feature_dim + feature_index, :target_t] = features[target_t][..., feature_index]
+
+        parameters = self.trainable_parameters()
+        grads = torch.autograd.grad(
+            log_probs, parameters, grad_outputs=weights, allow_unused=True, is_grads_batched=True
+        )
+        pieces = []
+        for parameter, grad in zip(parameters, grads):
+            if grad is None:
+                pieces.append(torch.zeros(n_outputs, parameter.numel(), dtype=self.env.dtype, device=self.env.device))
+            else:
+                pieces.append(grad.reshape(n_outputs, -1))
+        return torch.cat(pieces, dim=1).reshape(self.horizon, feature_dim, self.n_parameters)
+
     def estimate_moment_sensitivities(self, moments, seed, eta=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
@@ -965,6 +1001,9 @@ class ContinuousTransport:
             torch.zeros(feature_dim, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
             for _ in range(self.horizon + 1)
         ]
+        if self.horizon == 0:
+            return sensitivities
+
         states = [self.initial_states(self.n_law_gradient, generator)]
         action_log_probs = []
         perturbations = []
@@ -979,43 +1018,32 @@ class ContinuousTransport:
             with torch.no_grad():
                 states.append(self.sample_next_state(t, states[-1], perturbed_moment, action, generator))
 
+        features = [self.state_law_features(state).detach() for state in states]
+        log_prob_gradients = self.batched_log_prob_gradients(action_log_probs, features, feature_dim)
+
+        # The score is a prefix sum over time: each target_t only adds the term for
+        # the step just completed, whose sensitivity was finalized last iteration.
+        score = torch.zeros(self.n_law_gradient, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
         for target_t in range(1, self.horizon + 1):
-            mean_estimate = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
-            second_moment_estimate = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
+            zeta, beta, affine_scale, perturbed_moment = perturbations[target_t - 1]
+            score = score + self.transport_score(
+                moments[target_t - 1], perturbed_moment, zeta, beta, affine_scale, eta, sensitivities[target_t - 1]
+            )
 
-            score = torch.zeros(self.n_law_gradient, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
-            for s in range(target_t):
-                zeta, beta, affine_scale, perturbed_moment = perturbations[s]
-                score = score + self.transport_score(
-                    moments[s], perturbed_moment, zeta, beta, affine_scale, eta, sensitivities[s]
-                )
+            estimates = []
+            for feature_index in range(feature_dim):
+                feature = features[target_t][..., feature_index]
+                estimate = (feature.unsqueeze(-1) * score).sum(dim=0)
+                estimate = estimate + log_prob_gradients[target_t - 1, feature_index]
+                estimates.append(estimate / self.n_law_gradient)
 
-            state = states[target_t]
-            log_probs = torch.stack(action_log_probs[:target_t])
             if hasattr(self.env, "state_law_features"):
-                features = self.state_law_features(state)
                 for feature_index in range(feature_dim):
-                    feature = features[..., feature_index]
-                    estimate = (feature.unsqueeze(-1) * score).sum(dim=0)
-                    estimate = estimate + self.flat_grad(
-                        (log_probs * feature.detach().unsqueeze(0)).sum(),
-                        retain_graph=target_t < self.horizon or feature_index < feature_dim - 1,
-                    )
-                    sensitivities[target_t][feature_index] = estimate / self.n_law_gradient
+                    sensitivities[target_t][feature_index] = estimates[feature_index]
                 continue
 
-            mean_estimate = mean_estimate + (state.unsqueeze(-1) * score).sum(dim=0)
-            mean_estimate = mean_estimate + self.flat_grad(
-                (log_probs * state.detach().unsqueeze(0)).sum(), retain_graph=True
-            )
-            second_moment_estimate = second_moment_estimate + (state.square().unsqueeze(-1) * score).sum(dim=0)
-            second_moment_estimate = second_moment_estimate + self.flat_grad(
-                (log_probs * state.square().detach().unsqueeze(0)).sum(), retain_graph=target_t < self.horizon
-            )
-
-            mean_gradient = mean_estimate / self.n_law_gradient
-            second_moment_gradient = second_moment_estimate / self.n_law_gradient
-            variance_gradient = second_moment_gradient - 2.0 * moments[target_t][0] * mean_gradient
+            mean_gradient = estimates[0]
+            variance_gradient = estimates[1] - 2.0 * moments[target_t][0] * mean_gradient
 
             sensitivities[target_t][0] = mean_gradient
             sensitivities[target_t][1] = variance_gradient / (2.0 * moments[target_t][1].clamp_min(1e-12))

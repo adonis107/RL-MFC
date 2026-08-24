@@ -4,7 +4,7 @@ import torch
 
 from .constants import STATE_LABELS
 from .flows import final_policy_probabilities, learned_flow
-from .io import load_env_and_policy, validation_dataframe
+from .io import adaptive_schedule_dataframe, load_env_and_policy, validation_dataframe
 
 
 STATE_FLOW_BENCHMARKS = {
@@ -272,3 +272,50 @@ def plot_flow_comparison(runs, env, horizon=None, ax=None, save_path=None):
     if save_path is not None:
         ax.figure.savefig(save_path, bbox_inches="tight", dpi=180)
     return ax, grouped
+
+
+def plot_adaptive_schedule(runs, env=None, horizon=None, flow=None, save_path=None):
+    """Evolution of the adaptive perturbation scales and the signals driving them."""
+    df = adaptive_schedule_dataframe(runs)
+    for column, value in (("env", env), ("horizon", horizon), ("flow", flow)):
+        if value is not None:
+            df = df[df[column] == value]
+    if df.empty:
+        raise ValueError("No adaptive-transport runs matched the requested filters.")
+
+    figure, axes = plt.subplots(2, 1, figsize=(8, 6.5), sharex=True)
+    for column, name, ax in (("lambda", r"$\lambda$", axes[0]), ("eta", r"$\eta$", axes[0])):
+        summary = df.groupby("step", as_index=False)[column].agg(["mean", "std"]).reset_index()
+        summary = summary.sort_values("step").fillna({"std": 0.0})
+        line = ax.plot(summary["step"], summary["mean"], label=name)[0]
+        ax.fill_between(
+            summary["step"],
+            summary["mean"] - summary["std"],
+            summary["mean"] + summary["std"],
+            alpha=0.18,
+            color=line.get_color(),
+        )
+    axes[0].set_ylabel("perturbation scale")
+    axes[0].legend(frameon=False)
+    axes[0].grid(alpha=0.25)
+
+    for column, name in (("z_lambda", r"$z_\lambda$"), ("z_eta", r"$z_\eta$")):
+        summary = df.groupby("step", as_index=False)[column].agg(["mean"]).reset_index().sort_values("step")
+        axes[1].plot(summary["step"], summary["mean"], label=name)
+    axes[1].axhline(0.0, linestyle="--", linewidth=1.0, alpha=0.6, color="black")
+    axes[1].set_xlabel("training step")
+    axes[1].set_ylabel("controller signal")
+    axes[1].legend(frameon=False)
+    axes[1].grid(alpha=0.25)
+
+    resolved = df["lambda_resolved"].dropna()
+    if not resolved.empty:
+        rate = 100.0 * float(resolved.mean())
+        axes[1].set_title(f"bias estimate resolved on {rate:.0f}% of checkpoints", fontsize=9)
+
+    figure.tight_layout()
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(save_path, bbox_inches="tight", dpi=180)
+        plt.close(figure)
+    return axes

@@ -166,7 +166,7 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
     eta = algorithm_config.get("eta") or lambda_
     particle_count = n_particles or algorithm_config.get("n_particles") or env.config.n_particles
 
-    if metadata["env"] in {"lq", "portfolio"}:
+    if metadata["env"] in {"lq", "portfolio", "kuramoto"}:
         config = ContinuousTransportConfig(
             n_particles=particle_count,
             n_law_gradient=algorithm_config.get("n_law_gradient"),
@@ -208,17 +208,20 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
         base_seed = seed + replication * 100_000
 
         if isinstance(estimator, ContinuousTransport):
-            moments = estimator.mean_field_moment_flow(seed=base_seed + 20_000)
-            sensitivities = estimator.estimate_moment_sensitivities(moments, base_seed + 10_000)
-            zeros = [torch.zeros_like(sensitivity) for sensitivity in sensitivities]
-            full_gradient, _ = estimator.batched_trajectory_gradient(moments, sensitivities, base_seed)
-            policy_gradient, _ = estimator.batched_trajectory_gradient(moments, zeros, base_seed)
+            flow = estimator.mean_field_moment_flow(seed=base_seed + 20_000)
+            sensitivities = estimator.estimate_moment_sensitivities(flow, base_seed + 10_000)
         else:
-            laws, _ = estimator.mean_field_law_flow(seed=base_seed + 20_000)
-            sensitivities = estimator.estimate_state_sensitivities(laws, base_seed + 10_000)
-            zeros = [torch.zeros_like(sensitivity) for sensitivity in sensitivities]
-            full_gradient, _ = estimator.batched_trajectory_gradient(laws, sensitivities, base_seed)
-            policy_gradient, _ = estimator.batched_trajectory_gradient(laws, zeros, base_seed)
+            flow, _ = estimator.mean_field_law_flow(seed=base_seed + 20_000)
+            sensitivities = estimator.estimate_state_sensitivities(flow, base_seed + 10_000)
+
+        # Both gradients share the seed, so they share one rollout: only the
+        # sensitivities fed to the law-score term differ.
+        zeros = [torch.zeros_like(sensitivity) for sensitivity in sensitivities]
+        action_gradient, weights, law_scores, _ = estimator.batched_trajectory_components(flow, base_seed)
+        full_gradient = estimator.combine_batched_trajectory_components(
+            action_gradient, weights, law_scores, sensitivities
+        )
+        policy_gradient = estimator.combine_batched_trajectory_components(action_gradient, weights, law_scores, zeros)
 
         full_gradient = full_gradient.detach().cpu()
         policy_gradient = policy_gradient.detach().cpu()
