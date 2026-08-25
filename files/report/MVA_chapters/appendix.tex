@@ -1298,7 +1298,7 @@ Table~\ref{tab:twostate-policy-error} gives the policy-recovery error of every t
 \section{The two-state calibration grid}
 \label{appendix:twostate-grid}
 
-Table~\ref{tab:twostate-grid} is the full $(\lambda,\eta)$ sweep on which the auxiliary scale used by every other benchmark was calibrated, and Figure~\ref{fig:twostate-eta} shows the effect of $\eta$ at a fixed main scale, with and without a particle approximation of the population flow.
+Table~\ref{tab:twostate-grid} is the full $(\lambda,\eta)$ sweep on which the auxiliary scale used by every other benchmark was calibrated, and Figure~\ref{fig:twostate-eta} shows the effect of $\eta$ at a fixed main scale, with and without a particle approximation of the population flow. Figure~\ref{fig:appendix-twostate} gives the shorter-horizon counterpart at $T=2$, where the ordering in $\eta$ reverses, together with the particle-flow validation curve at $T=5$.
 
 \input{tables/twostate_grid}
 
@@ -1331,9 +1331,8 @@ Table~\ref{tab:twostate-grid} is the full $(\lambda,\eta)$ sweep on which the au
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.49\linewidth]{figures/distribution_validation_T5.png}
-\includegraphics[width=0.49\linewidth]{figures/distribution_terminal_law.png}
-\caption{Distribution-planning benchmark at $T=5$. Left: validation reward against training iteration, as mean over five seeds with one standard deviation shaded; REINFORCE is the flat line at $-0.2616$. Right: terminal population law learned by fixed-scale transport at $\lambda=0.4$, against the uniform initial law and the target. The learned flow is coherent transport towards the target mode rather than local oscillation, but it overshoots the centre and undershoots the shoulders.}
+\includegraphics[width=0.62\linewidth]{figures/distribution_validation_T5.png}
+\caption{Distribution-planning benchmark at $T=5$: validation reward against training iteration, as mean over five seeds with one standard deviation shaded. REINFORCE is the flat line at $-0.2616$; the transport curves oscillate over tens of thousands of iterations without settling.}
 \label{fig:distribution-validation}
 \end{figure}
 
@@ -1429,30 +1428,27 @@ Figure~\ref{fig:adaptive-schedule} shows the controller trajectory on the linear
 \section{Allocating the auxiliary budget}
 \label{appendix:auxiliary-budget}
 
-The equal-budget rule of Section~\ref{subsec:experimentation-protocol} fixes the total number of simulated transitions per update but not their split between the main trajectories and the auxiliary sensitivity estimate. This section records that split for every benchmark, and the two experiments that test whether reallocating it changes the outcome.
-
-\paragraph{The auxiliary budget is the binding constraint.}
-The equal-budget rule of Section~\ref{subsec:experimentation-protocol} fixes the total $T(B_{\mathrm{tr}}+n_{\mathrm{tr}})$ but leaves the split free, and Table~\ref{tab:auxiliary-budget} shows that the split is where this benchmark differs from the rest of the suite. The transport runs use $B_{\mathrm{tr}}=549$ main trajectories and $n_{\mathrm{tr}}=11$ auxiliary trajectories, while the population argument is a ten-point simplex whose derivative has $d=9$ free coordinates. That is $1.2$ auxiliary trajectories per coordinate, against $12$ on the two-state and advertising problems, $20$ on the linear--quadratic benchmark and $200$ on the portfolio benchmark. Distribution planning is the only benchmark on which the auxiliary estimate is asked to resolve more coordinates than it has samples, and it is also the benchmark on which transport underperforms MF-REINFORCE most.
+The equal-budget rule of Section~\ref{subsec:experimentation-protocol} fixes the total number of simulated transitions per update, $T(B_{\mathrm{tr}}+n_{\mathrm{tr}})$, but not its split between the main trajectories and the auxiliary sensitivity estimate. Table~\ref{tab:auxiliary-budget} records that split on every benchmark, together with the number $d$ of free coordinates of the population argument that the auxiliary estimate has to resolve.
 
 \input{tables/auxiliary_budget}
 
-The reallocation is available in principle, since the budget rule constrains only the sum: taking $B_{\mathrm{tr}}=200$ and $n_{\mathrm{tr}}=360$ leaves $T(B_{\mathrm{tr}}+n_{\mathrm{tr}})=2\,800$ unchanged and raises the auxiliary sample size to $40$ per coordinate. It is also affordable in arithmetic. One might expect the cost of the update to grow linearly in $n_{\mathrm{tr}}$, but the sensitivity recursion is applied to the whole auxiliary batch at once, and a direct measurement gives a factor $1.9$ in seconds per training step when $n_{\mathrm{tr}}$ goes from $11$ to $360$, a $33$-fold increase in auxiliary samples. The dominant cost of the update on this benchmark is the exact population recursion over the ten-point simplex, which the reallocation does not touch.
+The ratio $n_{\mathrm{tr}}/d$ spans more than two orders of magnitude across the suite, and distribution planning is the extreme case. Its transport runs use $B_{\mathrm{tr}}=549$ main and $n_{\mathrm{tr}}=11$ auxiliary trajectories against a ten-point simplex with $d=9$, that is $1.2$ auxiliary trajectories per coordinate, against $6.7$ on cybersecurity, $12$ on the two-state and advertising problems, $20$ on the linear--quadratic benchmark and $200$ on the portfolio benchmark. It is the only benchmark on which the auxiliary estimate is asked to resolve more coordinates than it has samples, and the only finite-state benchmark on which transport loses to MF-REINFORCE by a wide margin. Whether that association is causal is the question taken up as an extension in Section~\ref{sec:extensions}. This section records the two measurements bearing on it: what a reallocation costs, and what it does on a benchmark where the hypothesis predicts nothing.
+
+\paragraph{The cost of reallocating.}
+The split can be changed without changing the budget, since the rule constrains only the sum: on distribution planning, taking $B_{\mathrm{tr}}=200$ and $n_{\mathrm{tr}}=360$ leaves $T(B_{\mathrm{tr}}+n_{\mathrm{tr}})=2\,800$ unchanged and raises the auxiliary sample size to $40$ per coordinate. It is also affordable in arithmetic. One might expect the cost of the update to grow linearly in $n_{\mathrm{tr}}$, but the sensitivity recursion is applied to the whole auxiliary batch at once, and a direct measurement gives a factor $1.9$ in seconds per training step when $n_{\mathrm{tr}}$ goes from $11$ to $360$, a $33$-fold increase in auxiliary samples. The dominant cost of the update on this benchmark is the exact population recursion over the ten-point simplex, which the reallocation does not touch. Applied to a base cost of $6\,802$ seconds per transport seed over $30\,000$ iterations (Table~\ref{tab:budget-runtime}), that factor nonetheless puts a five-seed reallocated arm outside the compute budget of the internship so far, which is why the experiment is proposed in Section~\ref{sec:extensions} rather than reported here.
+
+\paragraph{A negative control on targeted advertising.}
+Table~\ref{tab:reallocation} reports the same reallocation on a benchmark where the hypothesis predicts no effect. The advertising population argument is a two-point simplex with a single free coordinate, and its transport runs already use $n_{\mathrm{tr}}=12$ auxiliary trajectories, the same ratio as the two-state benchmark on which transport is the best estimator at $T=5$. Moving the split from $(B_{\mathrm{tr}},n_{\mathrm{tr}})=(248,12)$ to $(100,160)$ at fixed budget takes the final objective from $0.9795\pm0.0089$ to $0.9734\pm0.0079$, a difference well inside one standard deviation. Where the auxiliary estimate is already resolved, moving budget towards it does not help, which is what the hypothesis predicts; Section~\ref{subsec:targeted-advertising} identifies a different mechanism as the limitation there. The control establishes the absence of an effect where the ratio is already high; the positive arm is what the extension of Section~\ref{sec:extensions} would supply.
 
 \input{tables/reallocation}
 
-The same reasoning does not apply to targeted advertising. Its population argument is a two-point simplex with a single free coordinate, and its transport runs already use $n_{\mathrm{tr}}=12$ auxiliary trajectories, the same ratio as the two-state benchmark on which transport is the best estimator at $T=5$. The auxiliary budget is therefore not what limits it, and Section~\ref{subsec:targeted-advertising} identifies a different mechanism.
-
-\section{Theoretical-validation tables}
+\section{Perturbation bound along the learned flows}
 \label{appendix:theory-tables}
 \label{appendix:tv-bounds}
 
-These are the three measurement tables behind Table~\ref{tab:theory-verdicts} of Section~\ref{sec:theory-validation}: the perturbation bound along every finite-state transport flow, the objective bias against the perturbation scale on the two benchmarks with a closed-form optimum, and the replicated gradient diagnostics on the linear--quadratic benchmark.
+Table~\ref{tab:tv-bounds} is the first of the measurement tables behind Table~\ref{tab:theory-verdicts} of Section~\ref{sec:theory-validation}, recording the largest value of $d_{\mathrm{TV}}(M_t^{\lambda,\theta},\mu_t^\theta)/\lambda$ along the learned flow of every finite-state transport run. The other two, the objective bias against the perturbation scale and the replicated gradient diagnostics, are reported in the body of that section.
 
 \input{tables/tv_bounds}
-
-\input{tables/objective_bias_scaling}
-
-\input{tables/gradient_diagnostics_lq}
 
 \section{The population-dependence ablation}
 \label{appendix:gamma-ablation}

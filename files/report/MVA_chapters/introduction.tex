@@ -52,7 +52,9 @@ For $\mu\in\Delta_N$, we define the discrete transport perturbation $\Phi_\mu^\l
 The population-score term requires the sensitivity of the population flow with respect to the policy parameters. We derive a forward recursion for this quantity, in which the sensitivity at time $t$ depends only on earlier ones, so that the whole sensitivity flow can be estimated from shared simulated trajectories. With cumulative computations this gives a simulator cost linear in the horizon, against the quadratic cost of estimating each truncated sensitivity separately. The estimators are implemented as fixed-scale and adaptive Monte Carlo algorithms, the adaptive version updating the main and auxiliary perturbation scales by comparing gradient estimates at nearby scales, so as to balance perturbation bias and estimator variance without a full environment-specific grid search.
 
 
-\paragraph{Status of the contributions.}
+\section{Status of the contributions}
+\label{sec:contribution-status}
+
 The contributions above are at different stages, and Table~\ref{tab:contribution-status} states which. The finite-state construction is complete: every step from the perturbation estimate to the mean-square-error decomposition is proved. The continuous-state construction is complete as far as the objective, and open beyond it: the representation, the perturbation, the density and the score are established, and the perturbed objective is shown to converge, but the gradient-level counterparts are not yet proved. The continuous-state experiments are therefore run with an estimator built by analogy with the finite-state case, and the reader should treat their guarantees as an extrapolation rather than a theorem. This is the main limitation of the report and is discussed again in Section~\ref{sec:strengths-limitations}.
 
 \begin{table}[H]
@@ -82,7 +84,7 @@ Estimator of $D_\theta z_{K,t}^\theta$ & continuous & --- & implemented for exac
 Bias and mean-square-error decomposition & continuous & --- & \emph{open} \\
 \midrule
 Fixed-scale and adaptive algorithms & both & Ch.~\ref{chapter:algorithms} & implemented, $640$ runs \\
-Four theoretical predictions & both & Sec.~\ref{sec:theory-validation} & measured, hold as stated \\
+Four theoretical predictions & both & Sec.~\ref{sec:theory-validation} & measured; three confirmed, unbiasedness only for $\lambda\leq0.2$ \\
 Alignment predicts whether REINFORCE is competitive & both & Sec.~\ref{sec:correction-alignment} & empirical, not a theorem \\
 \bottomrule
 \end{tabular}

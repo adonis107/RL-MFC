@@ -212,7 +212,7 @@ The adaptive controller is deliberately separated from the policy optimizer. The
 \section{Computational cost}
 
 The relevant cost unit is one simulated transition. For a horizon $T$ and a main batch of size $B$, REINFORCE has per-update cost $C_{\mathrm{RF}} = BT$.
-For finite-state MF-REINFORCE with $n$ auxiliary trajectories and shared state-gradient reuse, the auxiliary procedure requires two perturbed forward simulations for each pair of time indices, yielding $C_{\mathrm{MF}} = BT + 2n\frac{T(T+1)}{2}$.
+For finite-state MF-REINFORCE with $n$ auxiliary trajectories and shared state-gradient reuse, the auxiliary procedure requires two perturbed forward simulations for each pair of time indices, yielding $C_{\mathrm{MF}} = BT + nT(T+1)$. Algorithm~1 of \cite{meunier2026model} instead repeats that auxiliary pass inside the loop over the main batch, at a cost of order $nBT^2$; Section~\ref{subsec:experimentation-protocol} explains why the two differ and which is used to match budgets.
 The recursive transport estimator uses one auxiliary forward pass and one main forward pass, hence $C_{\mathrm{tr}} = T(B+n)$.
 Adaptive transport adds the amortized cost of its checkpoints. If a checkpoint is performed every $K$ iterations and uses $R$ independent replications of the contracted-scale diagnostic, its average per-update cost is written abstractly as $C_{\mathrm{ad}} = C_{\mathrm{tr}} + \frac1K C_{\mathrm{diag}}(R,T)$.
 

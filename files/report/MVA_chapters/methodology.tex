@@ -194,7 +194,9 @@ For fixed $(t,\lambda,\theta)$, define the affine map $\phi_t^{\lambda, \theta}:
 
 \begin{theorem}[Perturbation estimate]
     \label{theorem:discrete-perturbation-estimate}
-    Let $\lambda\in(0,1)$ and let $q_t\in\Delta_N$. For the perturbed population law $M_t^{\lambda,\theta}(\omega) = (1-\lambda)\mu_t^\theta + \lambda q_t(\omega)$, we have $d_\mathrm{TV}(M_t^{\lambda,\theta}(\omega), \mu_t^\theta) \leq \lambda, \qquad \text{for every }\omega$.
+    Let $\lambda\in(0,1)$ and let $q_t\in\Delta_N$. For the perturbed population law $M_t^{\lambda,\theta}(\omega) = (1-\lambda)\mu_t^\theta + \lambda q_t(\omega)$, we have \begin{align}
+        d_\mathrm{TV}(M_t^{\lambda,\theta}(\omega), \mu_t^\theta) \leq \lambda, \qquad \text{for every }\omega.
+    \end{align}
     Moreover, if $\Xc$ is endowed with a metric $d_\Xc$ of diameter $\mathrm{diam}(\Xc)\coloneqq \max_{i,j\in\Xc} d_\Xc(i,j)$, then $W_1(M_t^{\lambda,\theta}(\omega), \mu_t^\theta)\leq \mathrm{diam}(\Xc)\lambda,\qquad \text{for every }\omega$.
     Consequently, for any of the distances above, there exists a function $h(\lambda)$ such that
     \begin{align}
@@ -249,7 +251,10 @@ For $\theta\in\Theta$, define the averaged transition kernel, a probability meas
 \begin{align}
     K_t^\theta(j\mid i,m) \coloneqq \int_\Ac P_t(j\mid i,m,a) \pi_t^\theta(\d a\mid i,m),\qquad i,j\in\Xc,\ m\in\Delta_N,
 \end{align}
-and the averaged running reward $R_t^\theta(i,m)\coloneqq \int_\Ac r_t(i,m,a)\pi_t^\theta(\d a\mid i,m),\qquad i\in\Xc,\ m\in\Delta_N$.
+and the averaged running reward
+\begin{align}
+    R_t^\theta(i,m)\coloneqq \int_\Ac r_t(i,m,a)\pi_t^\theta(\d a\mid i,m),\qquad i\in\Xc,\ m\in\Delta_N.
+\end{align}
 The unperturbed law and the perturbed dynamics each then satisfy
 \begin{align}
     \mu_{t+1}^\theta(j) = \sum_{i=1}^N \mu_t^\theta(i) K_t^\theta(j\mid i,\mu_t^\theta),\qquad
@@ -287,14 +292,14 @@ Conditioning now on $(X_t^{\lambda,\theta}, M_t^{\lambda,\theta})$, and using $\
 
 \begin{lemma}[Stability of the state marginal]
     \label{lemma:stability-state-marginal}
-    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$ and every $t=0,\ldots,T$, $d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)\leq L_K\lambda t$.
+    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$ and every $t=0,\ldots,T$, $$d_\mathrm{TV}(\nu_t^{\lambda,\theta},\mu_t^\theta)\leq L_K\lambda t.$$
 \end{lemma}
 
 The proof is a finite-horizon induction based on the dual representation of total variation; see Appendix~\ref{appendix:objective-convergence-proofs}.
 
 \begin{theorem}[Convergence of the perturbed objective]
     \label{theorem:discrete-convergence-objective}
-    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$, $|J^\lambda(\theta) - J(\theta)|\leq C_T\lambda$.
+    Under Assumption~\ref{ass:discrete-uniform-regularity}, for every $\theta\in\Theta$, $$|J^\lambda(\theta) - J(\theta)|\leq C_T\lambda.$$
     If the constants in the assumption are uniform in $\theta$, then the convergence is uniform.
 \end{theorem}
 
@@ -344,7 +349,7 @@ The proof differentiates the two marginal recursions, compares the resulting tri
 
 \begin{theorem}[Gradient-level convergence]
     \label{theorem:discrete-gradient-convergence}
-    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^\nabla > 0$ such that, for every $\theta\in\Theta$ and every $\lambda\in(0,1)$, $\|\nabla_\theta J^\lambda(\theta) - \nabla_\theta J(\theta)\| \leq C_T^\nabla \lambda$.
+    Under Assumption~\ref{ass:discrete-gradient-regularity}, there exists a constant $C_T^\nabla > 0$ such that, for every $\theta\in\Theta$ and every $\lambda\in(0,1)$, $$\|\nabla_\theta J^\lambda(\theta) - \nabla_\theta J(\theta)\| \leq C_T^\nabla \lambda.$$
     If the constants in the assumption are uniform in $\theta$, then the convergence is uniform in $\theta$.
 \end{theorem}
 
@@ -678,12 +683,7 @@ Combining the two preceding propositions gives the main result of this subsectio
         \limsup_{\lambda\downarrow0} \left| J_K^\lambda(\theta) - J(\theta) \right| \leq C_T\delta_K^\theta.
         \label{eq:gmm-fixed-k-bias}
     \end{align}
-    Furthermore, if $(K_n,\lambda_n)$ is a sequence satisfying
-    \begin{align}
-        \delta_{K_n}^\theta \longrightarrow0, \qquad C_{\Gamma,K_n}\lambda_n \longrightarrow0,
-        \label{eq:gmm-joint-limit-condition}
-    \end{align}
-    then
+    Furthermore, if $(K_n,\lambda_n)$ is a sequence satisfying $\delta_{K_n}^\theta\to0$ and $C_{\Gamma,K_n}\lambda_n\to0$, then
     \begin{align}
         J_{K_n}^{\lambda_n}(\theta) \longrightarrow J(\theta).
         \label{eq:gmm-objective-joint-convergence}
@@ -716,12 +716,7 @@ As a direct consequence, the optimal values converge.
 
 \begin{corollary}[Convergence of optimal values and policies]
     \label{cor:gmm-optimal-policy-convergence}
-    Assume the hypotheses of Corollary~\ref{cor:gmm-uniform-objective-convergence} and suppose that $\Theta$ is compact and that $J:\Theta\to\R$ is continuous. Let
-    \begin{align}
-        V &\coloneqq \sup_{\theta\in\Theta} J(\theta), \\
-        V_K^\lambda &\coloneqq \sup_{\theta\in\Theta} J_K^\lambda(\theta).
-    \end{align}
-    Then
+    Assume the hypotheses of Corollary~\ref{cor:gmm-uniform-objective-convergence} and suppose that $\Theta$ is compact and that $J:\Theta\to\R$ is continuous. Let $V \coloneqq \sup_{\theta\in\Theta} J(\theta)$, and $V_K^\lambda \coloneqq \sup_{\theta\in\Theta} J_K^\lambda(\theta)$. Then
     \begin{align}
         \left| V_K^\lambda-V \right| \leq C_T \left( C_{\Gamma,K}\lambda+\Delta_K \right).
         \label{eq:gmm-optimal-value-bound}
@@ -737,7 +732,7 @@ The value estimate follows from $|\sup_\theta f-\sup_\theta g|\leq\sup_\theta|f-
 Theorem~\ref{thm:gmm-objective-convergence} establishes convergence at the objective level. For policy-gradient learning, however, we require the stronger property $\nabla_\theta J_K^\lambda(\theta) \longrightarrow \nabla_\theta J(\theta)$. Objective convergence alone does not imply convergence of gradients. 
 
 \paragraph{From mixtures to moment charts.}
-One point of vocabulary matters before the experiments. The construction above is stated for the Gaussian-mixture chart $\Gamma_K$ because that is the case in which a general population law on $\R^d$ admits a finite-dimensional representation with an explicit decoder, and it is the case in which the representation error $\delta_K^\theta$ is genuinely present. Nothing in the argument uses the mixture structure itself: what it uses is a finite-dimensional chart $z\mapsto\Gamma(z)$, a randomization $Z^{\lambda,\theta}=z^\theta+\lambda U$ within it, and a sensitivity $D_\theta z^\theta$. Any such chart gives the same density, the same score \eqref{eq:gmm-coordinate-score-sampled} and the same objective-convergence estimate. The continuous-state benchmarks of Chapter~\ref{chapter:experiments} are instances of this kind with an exact low-dimensional chart rather than a fitted mixture. On both, the perturbed population argument is one-dimensional, given by the mean, because that is the only functional of the law through which the policy, the transition and the reward depend on the population; the chart is exact and $\delta_K^\theta=0$ by construction. The remaining moments do not disappear: the variance is propagated alongside the mean by the closed recursion of each benchmark, but only to evaluate the exact objective and the closed-form optimum at a frozen policy, never as part of the perturbed argument or of a gradient step. They should therefore be read as exact-chart instances of the continuous construction, testing the perturbation and the sensitivity recursion in isolation, and not as a test of Gaussian-mixture fitting, which is not exercised anywhere in this report.
+One point matters before the experiments. The construction above is stated for the Gaussian-mixture chart $\Gamma_K$ because that is the case in which a general population law on $\R^d$ admits a finite-dimensional representation with an explicit decoder, and it is the case in which the representation error $\delta_K^\theta$ is genuinely present. Nothing in the argument uses the mixture structure itself: what it uses is a finite-dimensional chart $z\mapsto\Gamma(z)$, a randomization $Z^{\lambda,\theta}=z^\theta+\lambda U$ within it, and a sensitivity $D_\theta z^\theta$. Any such chart gives the same density, the same score \eqref{eq:gmm-coordinate-score-sampled} and the same objective-convergence estimate. The continuous-state benchmarks of Chapter~\ref{chapter:experiments} are instances of this kind with an exact low-dimensional chart rather than a fitted mixture. On both, the perturbed population argument is one-dimensional, given by the mean, because that is the only functional of the law through which the policy, the transition and the reward depend on the population; the chart is exact and $\delta_K^\theta=0$ by construction. The remaining moments do not disappear: the variance is propagated alongside the mean by the closed recursion of each benchmark, but only to evaluate the exact objective and the closed-form optimum at a frozen policy, never as part of the perturbed argument or of a gradient step. They should therefore be read as exact-chart instances of the continuous construction, testing the perturbation and the sensitivity recursion in isolation, and not as a test of Gaussian-mixture fitting, which is not exercised anywhere in this report.
 
 We have so far introduced the Gaussian-mixture representation and perturbation of the population law, derived the density and score of the randomized GMM parameters, and proved the convergence of the perturbed objective.
 
