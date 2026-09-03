@@ -18,6 +18,7 @@ results/
 LQ_framework(1).tex
 meunier2026.pdf
 motte.pdf
+QLEARNING CARMONA LAURIERE.pdf
 *.md
 !README.md
 
@@ -29,6 +30,7 @@ motte.pdf
 *.fdb_latexmk
 *.fls
 *.log
+*.nav
 *.out
 *.run.xml
 *.toc

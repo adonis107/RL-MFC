@@ -491,40 +491,56 @@ This is the cleanest continuous benchmark for explaining the additional mean-fie
 Moment recursions are exact, so validation has no trajectory noise.
 \end{block}
 
+\begin{alertblock}{Implementation notes}
+  \begin{itemize}
+    \item The algorithm used is an older version, a new algorithm based on the updated continuous-state theory is being implemented.
+    \item The following results are only illustrative of the mean-field score effect, some ML/optimization effects are being tuned.
+  \end{itemize}
+\end{alertblock}
+
 \end{frame}
 
 % -----------------------------------------------------------------------------
 \begin{frame}{Portfolio: training}
 \small
 \begin{exhibit}{Validation reward over training}
-\includegraphics[width=0.78\linewidth]{portfolio_validation_compact_T10.png}
+\includegraphics[width=0.78\linewidth]{portfolio_validation_fixed_T10_50k.png}
 \end{exhibit}
 \exhibitnote{Mean and one standard deviation over five seeds at $T=10$. Higher objective is better.}
 
 \vspace{0.1cm}
-Adaptive transport keeps improving throughout training. Fixed transport also improves, while standard REINFORCE does not recover the missing mean-field direction.
+Fixed transport continues improving at 50k steps, with $\lambda=0.2$ giving the cleanest final result. Standard REINFORCE does not recover the missing mean-field direction.
 \end{frame}
 
 % -----------------------------------------------------------------------------
 \begin{frame}{Portfolio: final validation result}
 \small
 \begin{exhibit}{Final validation result}
-\begin{tabular}{lrr}
+\begin{tabular}{lrrr}
 \toprule
-Method & Objective & Gap \\
+Method & Objective & Gap & $\|\nabla J\|$ \\
 \midrule
-Optimum & $-13.133$ & $0$ \\
-REINFORCE & $-20.535$ & $7.402$ \\
-Best fixed transport & $-17.980$ & $4.847$ \\
-Adaptive transport & $\mathbf{-17.193}$ & $\mathbf{4.060}$ \\
+Optimum & $-13.133$ & $0$ & $0.000$ \\
+REINFORCE & $-19.077$ & $5.944$ & $1.273$ \\
+Transport, $\lambda=0.2$ & $\mathbf{-16.762}$ & $\mathbf{3.629}$ & $\mathbf{0.796}$ \\
+Transport, $\lambda=0.4$ & $-17.109$ & $3.976$ & $0.838$ \\
 \bottomrule
 \end{tabular}
 \end{exhibit}
-\exhibitnote{Mean over five seeds at $T=10$. Higher objective is better; the gap is $|J(\widehat\theta)-J(\theta^\star)|$.}
+\exhibitnote{Mean over five seeds at $T=10$. Higher objective is better; the gap is $|J(\widehat\theta)-J(\theta^\star)|$. The gradient norm is exact, from the closed-form moment recursion.}
 
 \vspace{0.2cm}
-At the same simulator budget, adaptive transport ends about $3.34$ objective units closer to the closed-form optimum than REINFORCE. The fixed-scale transport runs already improve substantially; the adaptive scale gives the cleanest headline number.
+The exact optimum of the perturbed $\lambda=0.2$ problem is $-13.173$. The bottleneck is the optimization of the perturbed problem, not the perturbation itself. The mean-field score helps the optimizer find a better local optimum. Likely causes include
+\begin{itemize}
+  \item Finite noisy gradient estimates.
+  \item Constant Adam \cite{kingma2014adam} learning rate.
+  \item Fixed finite $\eta=0.85$, not controlled with sample size as the theory suggests.
+  \item No asymptotic decay of $\lambda$ to zero.
+\end{itemize}
 \end{frame}
+
+% -----------------------------------------------------------------------------
+
 
 % -----------------------------------------------------------------------------
 \begin{frame}{The mean-field term ablation}
