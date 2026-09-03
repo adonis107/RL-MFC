@@ -17,6 +17,8 @@ from mfc.algorithms import (
     ContinuousTransportConfig,
     DiscreteTransport,
     DiscreteTransportConfig,
+    MeanFieldQLearning,
+    MeanFieldQLearningConfig,
     MFReinforce,
     MFReinforceConfig,
     Reinforce,
@@ -69,6 +71,8 @@ def update_dataclass(config, **updates):
 def perturbation_label(algorithm, perturbation, eta):
     if algorithm == "reinforce":
         return "none"
+    if algorithm == "mfqlearning":
+        return "simplex"
     if algorithm == "mfreinforce":
         return f"eps_{perturbation:g}"
     if eta is None:
@@ -78,6 +82,8 @@ def perturbation_label(algorithm, perturbation, eta):
 
 def output_directory(args):
     label = perturbation_label(args.algorithm, args.perturbation, args.eta)
+    if args.algorithm == "mfqlearning":
+        label = f"Nm_{args.simplex_resolution}"
     name = f"{args.algorithm}_{label}_T_{args.horizon}_{args.flow}_seed_{args.seed}"
     return Path(args.results_root) / args.env / name
 
@@ -118,6 +124,17 @@ def build_algorithm(args, env):
 
     if args.algorithm == "reinforce":
         return Reinforce(env, config=ReinforceConfig(**common, baseline=use_baseline))
+
+    if args.algorithm == "mfqlearning":
+        if args.env != "cybersecurity":
+            raise ValueError("Mean-field Q-learning is currently configured only for cybersecurity.")
+        config = MeanFieldQLearningConfig(
+            **common,
+            learning_rate_power=args.q_learning_lr_power,
+            simplex_resolution=args.simplex_resolution,
+            sampling=args.q_learning_sampling,
+        )
+        return MeanFieldQLearning(env, config=config)
 
     if args.algorithm == "mfreinforce":
         if args.env not in DISCRETE_ENVS:
@@ -219,7 +236,9 @@ def build_algorithm(args, env):
 
 
 def save_policy(path, policy):
-    if isinstance(policy, torch.nn.Module):
+    if hasattr(policy, "export_payload"):
+        payload = policy.export_payload()
+    elif isinstance(policy, torch.nn.Module):
         payload = {"kind": "module_state_dict", "state_dict": policy.state_dict()}
     else:
         payload = {"kind": "tensor", "tensor": policy.detach().cpu()}
@@ -245,6 +264,9 @@ def simulator_budget_estimate(algorithm):
 
     if isinstance(algorithm, Reinforce):
         return particles * horizon
+
+    if isinstance(algorithm, MeanFieldQLearning):
+        return 1
 
     if isinstance(algorithm, AdaptiveDiscreteTransport):
         gradient_samples = algorithm.n_logit_gradient
@@ -376,7 +398,7 @@ def parse_args():
     parser.add_argument(
         "--algorithm",
         "--alg",
-        choices=["reinforce", "mfreinforce", "transport", "adaptive_transport"],
+        choices=["reinforce", "mfreinforce", "transport", "adaptive_transport", "mfqlearning"],
         required=True,
     )
     parser.add_argument("--perturbation", type=maybe_float, default=None)
@@ -395,6 +417,9 @@ def parse_args():
     parser.add_argument("--n-flow-particles", type=int, default=None)
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=1.0)
+    parser.add_argument("--simplex-resolution", type=int, default=30)
+    parser.add_argument("--q-learning-lr-power", type=float, default=0.6)
+    parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default="sweep")
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default="mean")
     parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
     parser.add_argument("--adaptive-replications", type=int, default=None)

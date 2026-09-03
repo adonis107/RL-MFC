@@ -39,6 +39,8 @@ def save_current(path):
 
 
 def perturbation_stem(metadata):
+    if metadata["algorithm"] == "mfqlearning":
+        return f"Nm_{metadata.get('algorithm_config', {}).get('simplex_resolution', 'na')}"
     perturbation = metadata["perturbation"] if metadata["perturbation"] is not None else "none"
     if metadata["algorithm"] not in {"transport", "adaptive_transport"}:
         return str(perturbation)
@@ -133,6 +135,8 @@ def save_validation_splits(horizon_runs, env, horizon, output_dir):
     if not transport_runs:
         plot_validation_rewards(horizon_runs, env=env, horizon=horizon)
         save_current(output_dir / f"validation_T_{horizon}.png")
+        plot_validation_rewards(horizon_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
+        save_current(output_dir / f"validation_transitions_T_{horizon}.png")
         return
 
     transport_flows = sorted({run["metadata"]["flow"] for run in transport_runs})
@@ -145,6 +149,8 @@ def save_validation_splits(horizon_runs, env, horizon, output_dir):
         plot_validation_rewards(overview_runs, env=env, horizon=horizon)
         suffix = "" if flow == default_flow else f"_{flow}"
         save_current(output_dir / f"validation_T_{horizon}{suffix}.png")
+        plot_validation_rewards(overview_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
+        save_current(output_dir / f"validation_transitions_T_{horizon}{suffix}.png")
 
     for flow in sorted({run["metadata"]["flow"] for run in transport_runs}):
         flow_runs = [run for run in transport_runs if run["metadata"]["flow"] == flow]

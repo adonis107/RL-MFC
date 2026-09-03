@@ -1,5 +1,6 @@
 from .reinforce import Reinforce, ReinforceConfig, train_reinforce
 from .mfreinforce import MFReinforce, MFReinforceConfig, train_mfreinforce
+from .mfqlearning import MeanFieldQLearning, MeanFieldQLearningConfig, MeanFieldQPolicy, train_mean_field_q_learning
 from .transport import (
     AdaptiveContinuousTransport,
     AdaptiveContinuousTransportConfig,

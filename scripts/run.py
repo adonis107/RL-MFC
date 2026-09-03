@@ -31,6 +31,7 @@ ADAPTIVE_REPLICATIONS = 4
 # where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
 TRANSPORT_AUXILIARY_GRADIENTS = {
     "cybersecurity": 20,
+    "distribution": 64,
     "kuramoto": 50,
     "lq": 20,
     "portfolio": 200,
@@ -78,6 +79,7 @@ def experiment_plan(env):
             for lambda_ in (0.1, 0.2, 0.4)
         )
         jobs.append(job(env, "adaptive_transport", 3, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
+        jobs.append(job(env, "mfqlearning", 3))
         return jobs
 
     if env == "distribution":
@@ -206,6 +208,8 @@ def fair_run_parameters(
             parameters["n_logit_gradient"] = auxiliary_gradient
         else:
             parameters["n_law_gradient"] = auxiliary_gradient
+    elif algorithm == "mfqlearning":
+        parameters["n_train"] = round(base_cost * (reference["n_train"] if "n_train" in reference else 20_000))
 
     if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport", "adaptive_transport"}:
         parameters["n_flow_particles"] = ref_particles
@@ -250,7 +254,7 @@ def command_for(job_spec, seed, args):
 
     optional_values = {
         "--device": args.device,
-        "--n-train": args.n_train,
+        "--n-train": args.n_train if args.n_train is not None else fair_parameters.get("n_train"),
         "--lr": args.lr,
         "--n-particles": args.n_particles if args.n_particles is not None else fair_parameters.get("n_particles"),
         "--n-logit-gradient": args.n_logit_gradient
@@ -265,6 +269,9 @@ def command_for(job_spec, seed, args):
         else fair_parameters.get("n_flow_particles"),
         "--validation-interval": args.validation_interval,
         "--simplex-sigma": args.simplex_sigma,
+        "--simplex-resolution": args.simplex_resolution,
+        "--q-learning-lr-power": args.q_learning_lr_power,
+        "--q-learning-sampling": args.q_learning_sampling,
         "--adaptive-checkpoint-interval": args.adaptive_checkpoint_interval,
         "--adaptive-replications": args.adaptive_replications,
     }
@@ -309,6 +316,9 @@ def parse_args():
     parser.add_argument("--n-flow-particles", type=int, default=None)
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=None)
+    parser.add_argument("--simplex-resolution", type=int, default=None)
+    parser.add_argument("--q-learning-lr-power", type=float, default=None)
+    parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default=None)
     parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
     parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)

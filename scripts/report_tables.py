@@ -60,7 +60,7 @@ REFERENCE_OPTIMUM = {
 TRANSPORT_ALLOCATION = {
     "twostate": (248, 12),
     "cybersecurity": (184, 20),
-    "distribution": (549, 11),
+    "distribution": (496, 64),
     "advertising": (248, 12),
     "lq": (201, 20),
     "portfolio": (311, 200),
@@ -88,6 +88,8 @@ def reference_optimum(figures_root, env, horizon):
 def method_of(label):
     if label.startswith("REINFORCE"):
         return "reinforce"
+    if label.startswith("MFQ-learning"):
+        return "mfqlearning"
     if label.startswith("MF-REINFORCE"):
         return "mfreinforce"
     if label.startswith("Adaptive"):
@@ -525,7 +527,7 @@ def benchmark_summary(figures_root, env):
     ]
     grouped = subset.groupby("label")["validation_reward"].agg(["mean", "std"]).reset_index()
     grouped["method"] = grouped["label"].map(method_of)
-    order = {"reinforce": 0, "mfreinforce": 1, "transport": 2, "adaptive": 3}
+    order = {"reinforce": 0, "mfreinforce": 1, "transport": 2, "adaptive": 3, "mfqlearning": 4}
     grouped = grouped.sort_values(["method", "label"], key=lambda column: column.map(order) if column.name == "method" else column)
 
     best = grouped["mean"].max()
@@ -536,9 +538,12 @@ def benchmark_summary(figures_root, env):
             (runtime["horizon"] == horizon)
             & ((runtime["flow"] == flow) | (runtime["algorithm"] == "reinforce"))
         ]
-        algorithm = {"reinforce": "reinforce", "mfreinforce": "mfreinforce", "adaptive": "adaptive_transport"}.get(
-            row["method"], "transport"
-        )
+        algorithm = {
+            "reinforce": "reinforce",
+            "mfreinforce": "mfreinforce",
+            "adaptive": "adaptive_transport",
+            "mfqlearning": "mfqlearning",
+        }.get(row["method"], "transport")
         entry = entry[entry["algorithm"] == algorithm]
         if row["method"] == "transport" and not entry.empty:
             lambda_text = row["label"].split("lambda=", 1)[1].split(",")[0]

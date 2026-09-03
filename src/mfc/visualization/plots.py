@@ -53,6 +53,7 @@ def plot_validation_rewards(
     ax=None,
     save_path=None,
     show_flow_label=None,
+    x_axis="step",
 ):
     df = validation_dataframe(runs)
     if env is not None:
@@ -77,7 +78,7 @@ def plot_validation_rewards(
         df["plot_label"] = df["plot_label"] + ", " + part
 
     summary = (
-        df.groupby(["plot_label", "step"], as_index=False)["validation_reward"]
+        df.groupby(["plot_label", x_axis], as_index=False)["validation_reward"]
         .agg(["mean", "std"])
         .reset_index()
         .fillna({"std": 0.0})
@@ -87,14 +88,14 @@ def plot_validation_rewards(
         _, ax = plt.subplots(figsize=(8, 4.5))
 
     for label, group in summary.groupby("plot_label", sort=False):
-        group = group.sort_values("step")
-        x = group["step"].to_numpy()
+        group = group.sort_values(x_axis)
+        x = group[x_axis].to_numpy()
         mean = group["mean"].to_numpy()
         std = group["std"].to_numpy()
         ax.plot(x, mean, label=label)
         ax.fill_between(x, mean - std, mean + std, alpha=0.18)
 
-    ax.set_xlabel("training step")
+    ax.set_xlabel("simulator transitions" if x_axis == "simulator_transitions" else "training step")
     if env == "lq":
         ax.set_ylabel("validation reward (-cost, higher is better)")
     else:

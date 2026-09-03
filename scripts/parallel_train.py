@@ -33,6 +33,9 @@ def parse_args():
     parser.add_argument("--n-flow-particles", type=int, default=None)
     parser.add_argument("--validation-interval", type=int, default=None)
     parser.add_argument("--simplex-sigma", type=float, default=None)
+    parser.add_argument("--simplex-resolution", type=int, default=None)
+    parser.add_argument("--q-learning-lr-power", type=float, default=None)
+    parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default=None)
     parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
     parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
@@ -78,6 +81,7 @@ def train_args_for(job_spec, seed, args):
         flow=job_spec["flow"],
         seed=seed,
         results_root=args.results_root,
+        simplex_resolution=args.simplex_resolution or 30,
     )
 
 

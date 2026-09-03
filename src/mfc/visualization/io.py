@@ -69,6 +69,9 @@ def run_label(metadata):
     algorithm = metadata["algorithm"]
     if algorithm == "reinforce":
         return "REINFORCE"
+    if algorithm == "mfqlearning":
+        resolution = metadata.get("algorithm_config", {}).get("simplex_resolution")
+        return "MFQ-learning" if resolution is None else f"MFQ-learning Nm={resolution}"
     if algorithm == "mfreinforce":
         return f"MF-REINFORCE eps={metadata['perturbation']:g}"
     if algorithm == "adaptive_transport":
@@ -92,6 +95,8 @@ def best_runs_by_label(runs, prefer_validation=True):
         if value is None:
             continue
         eta_key = None if metadata["algorithm"] == "adaptive_transport" else metadata.get("eta")
+        if metadata["algorithm"] == "mfqlearning":
+            eta_key = metadata.get("algorithm_config", {}).get("simplex_resolution")
         key = (metadata["algorithm"], metadata["perturbation"], eta_key, metadata["horizon"], metadata["flow"])
         if key not in best or value > best[key][0]:
             best[key] = (value, run)
@@ -161,6 +166,7 @@ def validation_dataframe(runs):
                     "flow": metadata["flow"],
                     "seed": metadata["seed"],
                     "step": step,
+                    "simulator_transitions": step * (metadata.get("simulator_budget_estimate") or 1),
                     "validation_reward": value,
                 }
             )
@@ -225,6 +231,10 @@ def load_env_and_policy(run, device=None):
     payload = torch.load(run["policy_path"], map_location=env.device, weights_only=False)
     if payload["kind"] == "tensor":
         policy = torch.nn.Parameter(payload["tensor"].to(device=env.device, dtype=env.dtype))
+    elif payload["kind"] == "mean_field_q_policy":
+        from mfc.algorithms import MeanFieldQPolicy
+
+        policy = MeanFieldQPolicy.from_payload(payload, device=env.device, dtype=env.dtype)
     elif payload["kind"] == "module_state_dict":
         policy = POLICIES[metadata["env"]](config)
         policy.load_state_dict(payload["state_dict"])

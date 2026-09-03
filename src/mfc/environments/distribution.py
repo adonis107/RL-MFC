@@ -13,7 +13,7 @@ class DistributionConfig:
     n_train: int = 30_000
     lr: float = 1e-4
     n_particles: int = 500
-    n_logit_gradient: int = 10
+    n_logit_gradient: int = 64
     validation_interval: int = 10
     # Intentionally different from the paper description to match the actual experiment 
     target_distribution: tuple[float, ...] = (0.02, 0.04, 0.09, 0.16, 0.19, 0.19, 0.16, 0.09, 0.04, 0.02)
