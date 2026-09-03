@@ -645,7 +645,6 @@ class ContinuousTransportConfig:
     eta: float | None = None
     rho: float | None = None
     law_chart: str = "mean"
-    min_affine_scale: float | None = None
     flow: str = "exact"
     n_flow_particles: int | None = None
     baseline: bool = True
@@ -851,16 +850,18 @@ class ContinuousTransport:
             return self.env.sample(state, self.law_argument(law), action, generator, t=t).reshape_as(state)
         return self.env.sample(state, self.law_argument(law), action, generator).reshape_as(state)
 
+    def chart_dim(self):
+        return 1 if self.config.law_chart == "mean" else 2
+
     def sample_perturbation(self, generator, scale):
         if hasattr(self.env, "sample_law_perturbation"):
             return self.env.sample_law_perturbation(generator, scale)
         if scale <= 0.0:
             raise ValueError("ContinuousTransport perturbation scales must be positive.")
-        if self.config.min_affine_scale is not None:
-            raise ValueError("min_affine_scale changes the perturbation law and invalidates the Gaussian score.")
-        zeta = self.rho * torch.randn((), dtype=self.env.dtype, device=self.env.device, generator=generator)
-        affine_scale = 1.0 + scale * zeta
-        beta = self.rho * torch.randn((), dtype=self.env.dtype, device=self.env.device, generator=generator)
+        shape = () if self.chart_dim() == 1 else (self.chart_dim(),)
+        beta = self.rho * torch.randn(shape, dtype=self.env.dtype, device=self.env.device, generator=generator)
+        zeta = torch.zeros_like(beta)
+        affine_scale = torch.ones_like(beta)
         return zeta, beta, affine_scale
 
     def sample_perturbation_batch(self, n_particles, generator, scale):
@@ -868,42 +869,33 @@ class ContinuousTransport:
             return self.env.sample_law_perturbation_batch(n_particles, generator, scale)
         if scale <= 0.0:
             raise ValueError("ContinuousTransport perturbation scales must be positive.")
-        if self.config.min_affine_scale is not None:
-            raise ValueError("min_affine_scale changes the perturbation law and invalidates the Gaussian score.")
-        zeta = self.rho * torch.randn(n_particles, dtype=self.env.dtype, device=self.env.device, generator=generator)
-        affine_scale = 1.0 + scale * zeta
-        beta = self.rho * torch.randn(n_particles, dtype=self.env.dtype, device=self.env.device, generator=generator)
+        shape = (n_particles,) if self.chart_dim() == 1 else (n_particles, self.chart_dim())
+        beta = self.rho * torch.randn(shape, dtype=self.env.dtype, device=self.env.device, generator=generator)
+        zeta = torch.zeros_like(beta)
+        affine_scale = torch.ones_like(beta)
         return zeta, beta, affine_scale
-
-    def perturb_mean(self, mean, zeta, beta, scale):
-        return (1.0 + scale * zeta) * mean + scale * beta
 
     def perturb_moment(self, moment, zeta, beta, scale):
         if hasattr(self.env, "perturb_law_features"):
             return self.env.perturb_law_features(moment, zeta, beta, scale)
-        affine_scale = 1.0 + scale * zeta
-        mean = affine_scale * moment[0] + scale * beta
-        variance = affine_scale.square() * moment[1]
+        if self.config.law_chart == "mean":
+            mean = moment[0] + scale * beta
+            variance = moment[1].expand_as(mean)
+            return torch.stack([mean, variance], dim=-1)
+        log_std = 0.5 * torch.log(moment[1].clamp_min(1e-12))
+        mean = moment[0] + scale * beta[..., 0]
+        perturbed_log_std = log_std + scale * beta[..., 1]
+        variance = torch.exp(2.0 * perturbed_log_std)
         return torch.stack([mean, variance], dim=-1)
-
-    def mean_score_h(self, mean, perturbed_mean, scale):
-        variance = scale**2 * self.rho**2 * (mean.square() + 1.0)
-        centered = perturbed_mean - mean
-        variance = variance.clamp_min(1e-12)
-        return centered / variance + mean * scale**2 * self.rho**2 * (centered.square() / variance.square() - 1.0 / variance)
-
-    def gaussian_score(self, moment, zeta, beta, affine_scale, scale, sensitivity):
-        mean_coefficient = affine_scale * beta / (scale * self.rho**2)
-        log_std_coefficient = affine_scale * (zeta - beta * moment[0]) / (scale * self.rho**2) - 1.0
-        return mean_coefficient.unsqueeze(-1) * sensitivity[0] + log_std_coefficient.unsqueeze(-1) * sensitivity[1]
 
     def transport_score(self, moment, perturbed_moment, zeta, beta, affine_scale, scale, sensitivity):
         if hasattr(self.env, "transport_score"):
             return self.env.transport_score(moment, perturbed_moment, zeta, beta, affine_scale, scale, sensitivity)
+        coefficient = beta / (scale * self.rho**2)
         if self.config.law_chart == "mean":
-            return self.mean_score_h(moment[0], perturbed_moment[..., 0], scale).unsqueeze(-1) * sensitivity[0]
+            return coefficient.unsqueeze(-1) * sensitivity[0]
         if self.config.law_chart == "gaussian":
-            return self.gaussian_score(moment, zeta, beta, affine_scale, scale, sensitivity)
+            return (coefficient.unsqueeze(-1) * sensitivity).sum(dim=-2)
         raise ValueError(f"Unknown law chart: {self.config.law_chart}")
 
     def mean_field_moment_flow(self, horizon=None, seed=None):

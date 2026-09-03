@@ -12,7 +12,7 @@ class PortfolioConfig:
     excess_return_volatility: float = 0.08
     chi: float = 10.0
     mean_field_penalty: float = 2.0
-    tau: float = 0.02
+    tau: float = 0.2
     rho: float = 1.0
     perturbation_scale: float = 0.0
     return_distribution: str = "normal"
@@ -58,15 +58,6 @@ class Portfolio:
 
         return self.rbar[t] + self.sigma_R[t] * noise
 
-    def perturbed_mean(self, mu_mean, generator, lambda_=None):
-        lambda_ = self.config.perturbation_scale if lambda_ is None else lambda_
-        if lambda_ == 0.0:
-            return mu_mean
-
-        zeta = self.config.rho * torch.randn(mu_mean.shape, dtype=mu_mean.dtype, device=mu_mean.device, generator=generator)
-        beta = self.config.rho * torch.randn(mu_mean.shape, dtype=mu_mean.dtype, device=mu_mean.device, generator=generator)
-        return (1.0 + lambda_ * zeta) * mu_mean + lambda_ * beta
-
     def policy_mean(self, theta, t, states, mu_mean):
         k, ell = theta[t]
         return k * (states - mu_mean) + ell
@@ -108,7 +99,7 @@ class Portfolio:
                 (self.s[t].square() + 2.0 * self.s[t] * self.rbar[t] * k + self.h[t] * k.square()) * Sigma[t]
                 + self.h[t] * self.tau[t].square()
                 + self.sigma_R[t].square() * ell.square()
-                + self.h[t] * k.square() * lambda_**2 * self.config.rho**2 * (mu[t].square() + 1.0)
+                + self.h[t] * k.square() * lambda_**2 * self.config.rho**2
             )
 
         return torch.stack(mu), torch.stack(Sigma)
@@ -116,13 +107,11 @@ class Portfolio:
     def objective(self, theta, lambda_=None):
         lambda_ = self.config.perturbation_scale if lambda_ is None else lambda_
         mu, Sigma = self.moment_flow(theta, lambda_)
-        value = mu[-1] - self.config.chi * (
-            Sigma[-1] + lambda_**2 * self.config.rho**2 * (mu[-1].square() + 1.0)
-        )
+        value = mu[-1] - self.config.chi * (Sigma[-1] + lambda_**2 * self.config.rho**2)
         gamma = self.config.mean_field_penalty
         if gamma != 0.0:
             perturbation = lambda_**2 * self.config.rho**2
-            running = mu[: self.config.T].square() * (1.0 + perturbation) + perturbation
+            running = mu[: self.config.T].square() + perturbation
             value = value - gamma * running.sum()
         return value
 
@@ -132,16 +121,12 @@ class Portfolio:
         p = torch.empty(self.config.T + 1, dtype=self.dtype, device=self.device)
         adj_var = torch.empty(self.config.T + 1, dtype=self.dtype, device=self.device)
 
-        p[-1] = 1.0 - 2.0 * self.config.chi * lambda_**2 * self.config.rho**2 * mu[-1]
+        p[-1] = 1.0
         adj_var[-1] = -self.config.chi
 
         for t in range(self.config.T - 1, -1, -1):
             k = theta[t, 0]
-            p[t] = self.s[t] * p[t + 1] + (
-                2.0 * self.h[t] * k.square() * lambda_**2 * self.config.rho**2 * mu[t] * adj_var[t + 1]
-            ) - 2.0 * self.config.mean_field_penalty * (
-                1.0 + lambda_**2 * self.config.rho**2
-            ) * mu[t]
+            p[t] = self.s[t] * p[t + 1] - 2.0 * self.config.mean_field_penalty * mu[t]
             adj_var[t] = (
                 self.s[t].square() + 2.0 * self.s[t] * self.rbar[t] * k + self.h[t] * k.square()
             ) * adj_var[t + 1]
@@ -151,7 +136,7 @@ class Portfolio:
             k, ell = theta[t]
             grad[t, 0] = 2.0 * adj_var[t + 1] * (
                 (self.s[t] * self.rbar[t] + self.h[t] * k) * Sigma[t]
-                + self.h[t] * k * lambda_**2 * self.config.rho**2 * (mu[t].square() + 1.0)
+                + self.h[t] * k * lambda_**2 * self.config.rho**2
             )
             grad[t, 1] = self.rbar[t] * p[t + 1] + 2.0 * self.sigma_R[t].square() * ell * adj_var[t + 1]
 

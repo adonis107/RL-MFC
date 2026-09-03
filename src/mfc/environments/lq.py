@@ -40,15 +40,6 @@ class LQ:
         noise = torch.randn(n_particles, dtype=self.dtype, device=self.device, generator=generator)
         return self.config.mu0 + self.config.Sigma0**0.5 * noise
 
-    def perturbed_mean(self, mu_mean, generator, lambda_=None):
-        lambda_ = self.config.perturbation_scale if lambda_ is None else lambda_
-        if lambda_ == 0.0:
-            return mu_mean
-
-        zeta = self.config.rho * torch.randn(mu_mean.shape, dtype=mu_mean.dtype, device=mu_mean.device, generator=generator)
-        beta = self.config.rho * torch.randn(mu_mean.shape, dtype=mu_mean.dtype, device=mu_mean.device, generator=generator)
-        return (1.0 + lambda_ * zeta) * mu_mean + lambda_ * beta
-
     def policy_mean(self, theta, t, states, mu_mean):
         return theta[t, 0] * states + theta[t, 1] * mu_mean
 
@@ -85,10 +76,7 @@ class LQ:
             mu.append((self.config.a + self.config.b * theta1 + self.config.b * theta2 + self.config.c) * mu[t])
             Sigma.append(
                 (self.config.a + self.config.b * theta1).square() * Sigma[t]
-                + (self.config.b * theta2 + self.config.c).square()
-                * lambda_**2
-                * self.config.rho**2
-                * (mu[t].square() + 1.0)
+                + (self.config.b * theta2 + self.config.c).square() * lambda_**2 * self.config.rho**2
                 + self.config.b**2 * self.config.tau**2
                 + self.config.sigma**2
             )
@@ -106,17 +94,13 @@ class LQ:
             objective = objective + self.config.r * (
                 (theta1 + theta2).square() * mu[t].square()
                 + theta1.square() * Sigma[t]
-                + theta2.square() * lambda_**2 * self.config.rho**2 * (mu[t].square() + 1.0)
+                + theta2.square() * lambda_**2 * self.config.rho**2
                 + self.config.tau**2
             )
-            objective = objective + self.config.gamma * (
-                lambda_**2 * self.config.rho**2 * (mu[t].square() + 1.0) + mu[t].square()
-            )
+            objective = objective + self.config.gamma * (lambda_**2 * self.config.rho**2 + mu[t].square())
 
         objective = objective + self.config.q_T * (Sigma[-1] + mu[-1].square())
-        objective = objective + self.config.gamma_T * (
-            lambda_**2 * self.config.rho**2 * (mu[-1].square() + 1.0) + mu[-1].square()
-        )
+        objective = objective + self.config.gamma_T * (lambda_**2 * self.config.rho**2 + mu[-1].square())
         return objective
 
     def exact_gradient(self, theta, lambda_=None):
@@ -125,27 +109,14 @@ class LQ:
         p = torch.empty(self.config.T + 1, dtype=self.dtype, device=self.device)
         s = torch.empty(self.config.T + 1, dtype=self.dtype, device=self.device)
 
-        p[-1] = 2.0 * (self.config.q_T + self.config.gamma_T * (1.0 + lambda_**2 * self.config.rho**2)) * mu[-1]
+        p[-1] = 2.0 * (self.config.q_T + self.config.gamma_T) * mu[-1]
         s[-1] = self.config.q_T
 
         for t in range(self.config.T - 1, -1, -1):
             theta1, theta2 = theta[t]
             p[t] = (
-                2.0
-                * (
-                    self.config.q
-                    + self.config.r * (theta1 + theta2).square()
-                    + self.config.r * theta2.square() * lambda_**2 * self.config.rho**2
-                    + self.config.gamma * (1.0 + lambda_**2 * self.config.rho**2)
-                )
-                * mu[t]
+                2.0 * (self.config.q + self.config.r * (theta1 + theta2).square() + self.config.gamma) * mu[t]
                 + (self.config.a + self.config.b * theta1 + self.config.b * theta2 + self.config.c) * p[t + 1]
-                + 2.0
-                * (self.config.b * theta2 + self.config.c).square()
-                * lambda_**2
-                * self.config.rho**2
-                * mu[t]
-                * s[t + 1]
             )
             s[t] = self.config.q + self.config.r * theta1.square() + (
                 self.config.a + self.config.b * theta1
@@ -162,14 +133,13 @@ class LQ:
             )
             grad[t, 1] = (
                 2.0 * self.config.r * (theta1 + theta2) * mu[t].square()
-                + 2.0 * self.config.r * theta2 * lambda_**2 * self.config.rho**2 * (mu[t].square() + 1.0)
+                + 2.0 * self.config.r * theta2 * lambda_**2 * self.config.rho**2
                 + self.config.b * mu[t] * p[t + 1]
                 + 2.0
                 * self.config.b
                 * (self.config.b * theta2 + self.config.c)
                 * lambda_**2
                 * self.config.rho**2
-                * (mu[t].square() + 1.0)
                 * s[t + 1]
             )
 
