@@ -11,14 +11,11 @@ wheels/
 
 # Folders
 archive/
-files/older references/
+files/
 results/
 
+
 # Files
-LQ_framework(1).tex
-meunier2026.pdf
-motte.pdf
-QLEARNING CARMONA LAURIERE.pdf
 *.md
 !README.md
 

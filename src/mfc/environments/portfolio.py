@@ -18,7 +18,7 @@ class PortfolioConfig:
     return_distribution: str = "normal"
     student_t_df: float = 5.0
     discount: float = 1.0
-    n_train: int = 10_000
+    n_train: int = 50_000
     lr: float = 1e-2
     n_particles: int = 500
     validation_interval: int = 10

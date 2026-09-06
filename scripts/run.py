@@ -16,23 +16,17 @@ DISCRETE_REFERENCE = {
 
 CONTINUOUS_REFERENCE = {
     "lq": {"n_particles": 200, "n_gradient": 1},
-    "kuramoto": {"n_particles": 500, "n_gradient": 20},
     "portfolio": {"n_particles": 500, "n_gradient": 1},
 }
 
 TRANSPORT_LAMBDAS = (0.05, 0.1, 0.2, 0.4, 0.8)
 TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
 DEFAULT_TRANSPORT_ETA = 0.85
-ADAPTIVE_INITIAL_LAMBDA = 0.2
-ADAPTIVE_INITIAL_ETA = 0.8
-ADAPTIVE_CHECKPOINT_INTERVAL = 100
-ADAPTIVE_REPLICATIONS = 4
 # Reallocate a fixed transport budget toward the auxiliary sensitivity estimate
 # where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
 TRANSPORT_AUXILIARY_GRADIENTS = {
     "cybersecurity": 20,
     "distribution": 64,
-    "kuramoto": 50,
     "lq": 20,
     "portfolio": 200,
 }
@@ -59,16 +53,6 @@ def experiment_plan(env):
                 for lambda_ in TRANSPORT_LAMBDAS:
                     for eta in TWOSTATE_TRANSPORT_ETAS:
                         jobs.append(job(env, "transport", horizon, flow=flow, perturbation=lambda_, eta=eta))
-                jobs.append(
-                    job(
-                        env,
-                        "adaptive_transport",
-                        horizon,
-                        flow=flow,
-                        perturbation=ADAPTIVE_INITIAL_LAMBDA,
-                        eta=ADAPTIVE_INITIAL_ETA,
-                    )
-                )
         return jobs
 
     if env == "cybersecurity":
@@ -78,7 +62,6 @@ def experiment_plan(env):
             job(env, "transport", 3, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
             for lambda_ in (0.1, 0.2, 0.4)
         )
-        jobs.append(job(env, "adaptive_transport", 3, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         jobs.append(job(env, "mfqlearning", 3))
         return jobs
 
@@ -89,7 +72,6 @@ def experiment_plan(env):
             job(env, "transport", 5, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
             for lambda_ in (0.1, 0.2, 0.4)
         )
-        jobs.append(job(env, "adaptive_transport", 5, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         return jobs
 
     if env == "advertising":
@@ -99,7 +81,6 @@ def experiment_plan(env):
             job(env, "transport", 5, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
             for lambda_ in (0.1, 0.2, 0.4)
         )
-        jobs.append(job(env, "adaptive_transport", 5, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
         return jobs
 
     if env == "lq":
@@ -109,16 +90,6 @@ def experiment_plan(env):
                 job(env, "transport", 20, flow=flow, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
                 for lambda_ in TRANSPORT_LAMBDAS
             )
-            jobs.append(
-                job(
-                    env,
-                    "adaptive_transport",
-                    20,
-                    flow=flow,
-                    perturbation=ADAPTIVE_INITIAL_LAMBDA,
-                    eta=ADAPTIVE_INITIAL_ETA,
-                )
-            )
         return jobs
 
     if env == "portfolio":
@@ -126,25 +97,6 @@ def experiment_plan(env):
         jobs.extend(
             job(env, "transport", 10, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
             for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4)
-        )
-        jobs.append(job(env, "adaptive_transport", 10, perturbation=ADAPTIVE_INITIAL_LAMBDA, eta=ADAPTIVE_INITIAL_ETA))
-        return jobs
-
-    if env == "kuramoto":
-        jobs = [job(env, "reinforce", 20, flow="particle")]
-        jobs.extend(
-            job(env, "transport", 20, flow="particle", perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
-            for lambda_ in (0.1, 0.2, 0.4)
-        )
-        jobs.append(
-            job(
-                env,
-                "adaptive_transport",
-                20,
-                flow="particle",
-                perturbation=ADAPTIVE_INITIAL_LAMBDA,
-                eta=ADAPTIVE_INITIAL_ETA,
-            )
         )
         return jobs
 
@@ -166,11 +118,7 @@ def mf_reference_cost(env, horizon):
     return trajectory_cost + state_gradient_cost
 
 
-def fair_run_parameters(
-    job_spec,
-    adaptive_checkpoint_interval=ADAPTIVE_CHECKPOINT_INTERVAL,
-    adaptive_replications=ADAPTIVE_REPLICATIONS,
-):
+def fair_run_parameters(job_spec):
     env = job_spec["env"]
     algorithm = job_spec["algorithm"]
     horizon = job_spec["horizon"]
@@ -185,21 +133,13 @@ def fair_run_parameters(
         parameters["n_logit_gradient"] = ref_gradient
     elif algorithm == "reinforce":
         parameters["n_particles"] = max(1, round(base_cost / horizon))
-    elif algorithm in {"transport", "adaptive_transport"}:
-        adaptive_factor = 1.0
-        if algorithm == "adaptive_transport":
-            if adaptive_checkpoint_interval:
-                adaptive_factor += 2.0 * adaptive_replications / adaptive_checkpoint_interval
-        per_step_budget = (base_cost / horizon) / adaptive_factor
+    elif algorithm == "transport":
+        per_step_budget = base_cost / horizon
         auxiliary_gradient = TRANSPORT_AUXILIARY_GRADIENTS.get(env)
         if auxiliary_gradient is None:
             scale = per_step_budget / (ref_particles + ref_gradient)
-            if algorithm == "adaptive_transport":
-                auxiliary_gradient = max(1, int(scale * ref_gradient))
-                parameters["n_particles"] = max(1, int(per_step_budget - auxiliary_gradient))
-            else:
-                parameters["n_particles"] = max(1, round(scale * ref_particles))
-                auxiliary_gradient = max(1, round(scale * ref_gradient))
+            parameters["n_particles"] = max(1, round(scale * ref_particles))
+            auxiliary_gradient = max(1, round(scale * ref_gradient))
         else:
             auxiliary_gradient = min(auxiliary_gradient, max(1, int(per_step_budget) - 1))
             parameters["n_particles"] = max(1, int(per_step_budget - auxiliary_gradient))
@@ -211,7 +151,7 @@ def fair_run_parameters(
     elif algorithm == "mfqlearning":
         parameters["n_train"] = round(base_cost * (reference["n_train"] if "n_train" in reference else 20_000))
 
-    if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport", "adaptive_transport"}:
+    if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport"}:
         parameters["n_flow_particles"] = ref_particles
 
     return parameters
@@ -237,17 +177,13 @@ def command_for(job_spec, seed, args):
 
     if job_spec["perturbation"] is not None:
         command.extend(["--perturbation", str(job_spec["perturbation"])])
-    if job_spec["algorithm"] in {"transport", "adaptive_transport"}:
+    if job_spec["algorithm"] == "transport":
         eta = args.eta if args.eta is not None else job_spec.get("eta")
         if eta is not None:
             command.extend(["--eta", str(eta)])
 
     fair_parameters = (
-        fair_run_parameters(
-            job_spec,
-            adaptive_checkpoint_interval=args.adaptive_checkpoint_interval or ADAPTIVE_CHECKPOINT_INTERVAL,
-            adaptive_replications=args.adaptive_replications or ADAPTIVE_REPLICATIONS,
-        )
+        fair_run_parameters(job_spec)
         if args.budget_mode == "fair"
         else {}
     )
@@ -272,8 +208,6 @@ def command_for(job_spec, seed, args):
         "--simplex-resolution": args.simplex_resolution,
         "--q-learning-lr-power": args.q_learning_lr_power,
         "--q-learning-sampling": args.q_learning_sampling,
-        "--adaptive-checkpoint-interval": args.adaptive_checkpoint_interval,
-        "--adaptive-replications": args.adaptive_replications,
     }
     for flag, value in optional_values.items():
         if value is not None:
@@ -299,7 +233,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Launch the training grid for one environment.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
         required=True,
     )
     parser.add_argument("--seeds", type=parse_seed_list, default=[0, 1, 2, 3, 4])
@@ -319,8 +253,6 @@ def parse_args():
     parser.add_argument("--simplex-resolution", type=int, default=None)
     parser.add_argument("--q-learning-lr-power", type=float, default=None)
     parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default=None)
-    parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
-    parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
@@ -334,7 +266,7 @@ def main():
     if args.baseline and args.no_baseline:
         raise ValueError("Use at most one of --baseline and --no-baseline.")
 
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "kuramoto", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
     selected_envs = envs if args.env == "all" else [args.env]
 
     commands = []
