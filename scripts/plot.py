@@ -114,6 +114,8 @@ def validation_overview_runs(horizon_runs, flow=None):
     transport_runs = []
     for run in horizon_runs:
         metadata = run["metadata"]
+        if metadata["algorithm"] == "mfqlearning":
+            continue
         if flow is not None and metadata["algorithm"] != "reinforce" and metadata["flow"] != flow:
             continue
         if metadata["algorithm"] == "transport":
@@ -130,13 +132,20 @@ def representative_plot_runs(runs):
 
 
 def save_validation_splits(horizon_runs, env, horizon, output_dir):
-    transport_runs = [run for run in horizon_runs if run["metadata"]["algorithm"] == "transport"]
+    mfq_runs = [run for run in horizon_runs if run["metadata"]["algorithm"] == "mfqlearning"]
+    comparison_runs = [run for run in horizon_runs if run["metadata"]["algorithm"] != "mfqlearning"]
+    transport_runs = [run for run in comparison_runs if run["metadata"]["algorithm"] == "transport"]
 
     if not transport_runs:
-        plot_validation_rewards(horizon_runs, env=env, horizon=horizon)
+        plot_validation_rewards(comparison_runs, env=env, horizon=horizon)
         save_current(output_dir / f"validation_T_{horizon}.png")
-        plot_validation_rewards(horizon_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
+        plot_validation_rewards(comparison_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
         save_current(output_dir / f"validation_transitions_T_{horizon}.png")
+        if mfq_runs:
+            plot_validation_rewards(mfq_runs, env=env, horizon=horizon)
+            save_current(output_dir / f"validation_mfq_T_{horizon}.png")
+            plot_validation_rewards(mfq_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
+            save_current(output_dir / f"validation_mfq_transitions_T_{horizon}.png")
         return
 
     transport_flows = sorted({run["metadata"]["flow"] for run in transport_runs})
@@ -158,11 +167,17 @@ def save_validation_splits(horizon_runs, env, horizon, output_dir):
             split_runs = [run for run in flow_runs if run["metadata"].get("perturbation") == perturbation]
             if not split_runs:
                 continue
-            plot_validation_rewards(split_runs, env=env, horizon=horizon)
-            save_current(
-                output_dir
-                / f"validation_transport_eta_sweep_T_{horizon}_{flow}_lambda_{value_stem(perturbation)}.png"
-            )
+        plot_validation_rewards(split_runs, env=env, horizon=horizon)
+        save_current(
+            output_dir
+            / f"validation_transport_eta_sweep_T_{horizon}_{flow}_lambda_{value_stem(perturbation)}.png"
+        )
+
+    if mfq_runs:
+        plot_validation_rewards(mfq_runs, env=env, horizon=horizon)
+        save_current(output_dir / f"validation_mfq_T_{horizon}.png")
+        plot_validation_rewards(mfq_runs, env=env, horizon=horizon, x_axis="simulator_transitions")
+        save_current(output_dir / f"validation_mfq_transitions_T_{horizon}.png")
 
 
 def save_flow_comparison_splits(transport_runs, env, horizon, output_dir):

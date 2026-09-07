@@ -28,6 +28,14 @@ class CybersecurityConfig:
     validation_interval: int = 10
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
+    @property
+    def discount(self):
+        # gamma is the discount per unit of time, as in Carmona et al.; the model is a
+        # continuous-time chain sampled at dt, so the per-step factor is gamma ** dt.
+        # Applying gamma directly per step makes the objective depend on dt: at dt=0.2 it
+        # gives a discount rate of -log(gamma)/dt = 3.47 instead of -log(gamma) = 0.69.
+        return self.gamma**self.dt
+
 
 class CybersecurityPolicy(nn.Module):
     def __init__(self, config=CybersecurityConfig()):
