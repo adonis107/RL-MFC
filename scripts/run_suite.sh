@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-WORKERS="${WORKERS:-8}"
+WORKERS="${WORKERS:-7}"
 RESULTS_ROOT="${RESULTS_ROOT:-results}"
 ENVS=(portfolio lq advertising cybersecurity twostate distribution)
 
