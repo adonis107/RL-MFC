@@ -353,7 +353,11 @@ def run_training(args):
         "horizon": args.horizon,
         "flow": args.flow,
         "seed": args.seed,
+        # asdict() only sees dataclass fields, so an environment that derives its
+        # per-step discount from a rate (cybersecurity: gamma ** dt) would not record the
+        # value the algorithms actually use. Record it explicitly.
         "env_config": {key: json_ready(value) for key, value in asdict(env.config).items()},
+        "resolved_discount": json_ready(algorithm.discount),
         "algorithm_config": {key: json_ready(value) for key, value in asdict(algorithm.config).items()},
         "simulator_budget_estimate": simulator_budget_estimate(algorithm),
         "elapsed_seconds": elapsed_seconds,

@@ -167,11 +167,11 @@ def save_validation_splits(horizon_runs, env, horizon, output_dir):
             split_runs = [run for run in flow_runs if run["metadata"].get("perturbation") == perturbation]
             if not split_runs:
                 continue
-        plot_validation_rewards(split_runs, env=env, horizon=horizon)
-        save_current(
-            output_dir
-            / f"validation_transport_eta_sweep_T_{horizon}_{flow}_lambda_{value_stem(perturbation)}.png"
-        )
+            plot_validation_rewards(split_runs, env=env, horizon=horizon)
+            save_current(
+                output_dir
+                / f"validation_transport_eta_sweep_T_{horizon}_{flow}_lambda_{value_stem(perturbation)}.png"
+            )
 
     if mfq_runs:
         plot_validation_rewards(mfq_runs, env=env, horizon=horizon)
