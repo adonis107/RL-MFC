@@ -488,59 +488,61 @@ This is the cleanest continuous benchmark for explaining the additional mean-fie
 \[
   \alpha_t=k_t(X_t-m_t)+\ell_t+\tau_t\varepsilon_t.
 \]
-Moment recursions are exact, so validation has no trajectory noise.
+Experiments use $\tau_t=0.2$. Moment recursions are exact, so validation has no trajectory noise.
 \end{block}
-
-\begin{alertblock}{Implementation notes}
-  \begin{itemize}
-    \item The algorithm used is an older version, a new algorithm based on the updated continuous-state theory is being implemented.
-    \item The following results are only illustrative of the mean-field score effect, some ML/optimization effects are being tuned.
-  \end{itemize}
-\end{alertblock}
 
 \end{frame}
 
 % -----------------------------------------------------------------------------
 \begin{frame}{Portfolio: training}
-\small
 \begin{exhibit}{Validation reward over training}
 \includegraphics[width=0.78\linewidth]{portfolio_validation_fixed_T10_50k.png}
 \end{exhibit}
-\exhibitnote{Mean and one standard deviation over five seeds at $T=10$. Higher objective is better.}
+\exhibitnote{Mean and one standard deviation over five seeds at $T=10$ with $\tau=0.2$. Higher objective is better.}
 
-\vspace{0.1cm}
-Fixed transport continues improving at 50k steps, with $\lambda=0.2$ giving the cleanest final result. Standard REINFORCE does not recover the missing mean-field direction.
 \end{frame}
 
 % -----------------------------------------------------------------------------
 \begin{frame}{Portfolio: final validation result}
-\small
 \begin{exhibit}{Final validation result}
-\begin{tabular}{lrrr}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
-Method & Objective & Gap & $\|\nabla J\|$ \\
+Method & Objective & Gap & $\|\nabla J\|$ & Time (s) \\
 \midrule
-Optimum & $-13.133$ & $0$ & $0.000$ \\
-REINFORCE & $-19.077$ & $5.944$ & $1.273$ \\
-Transport, $\lambda=0.2$ & $\mathbf{-16.762}$ & $\mathbf{3.629}$ & $\mathbf{0.796}$ \\
-Transport, $\lambda=0.4$ & $-17.109$ & $3.976$ & $0.838$ \\
+Optimum & $-13.154$ & $0$ & $0.000$ & -- \\
+REINFORCE & $-20.016{\pm}0.001$ & $6.862$ & $1.384{\pm}0.000$ & $224$ \\
+Transport, $\lambda=0.2$ & $-13.605{\pm}0.200$ & $0.451$ & $0.236{\pm}0.059$ & $796$ \\
+Transport, $\lambda=0.4$ & $\mathbf{-13.537{\pm}0.115}$ & $\mathbf{0.384}$ & $\mathbf{0.214{\pm}0.038}$ & $795$ \\
 \bottomrule
 \end{tabular}
 \end{exhibit}
-\exhibitnote{Mean over five seeds at $T=10$. Higher objective is better; the gap is $|J(\widehat\theta)-J(\theta^\star)|$. The gradient norm is exact, from the closed-form moment recursion.}
+\exhibitnote{Mean $\pm$ standard deviation over five seeds at $T=10$ with $\tau=0.2$. Gap and wall-clock time are reported as seed averages.}
 
-\vspace{0.2cm}
-The exact optimum of the perturbed $\lambda=0.2$ problem is $-13.173$. The bottleneck is the optimization of the perturbed problem, not the perturbation itself. The mean-field score helps the optimizer find a better local optimum. Likely causes include
-\begin{itemize}
-  \item Finite noisy gradient estimates.
-  \item Constant Adam \cite{kingma2014adam} learning rate.
-  \item Fixed finite $\eta=0.85$, not controlled with sample size as the theory suggests.
-  \item No asymptotic decay of $\lambda$ to zero.
-\end{itemize}
 \end{frame}
 
 % -----------------------------------------------------------------------------
+\begin{frame}{Portfolio: terminal wealth diagnostics}
+\begin{exhibit}{Terminal law under the learned policies}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Method & $\E[X_T]$ & $\operatorname{Var}(X_T)$ & $\E[X_T]-\E[X_0]$ \\
+\midrule
+Optimum & $0.543$ & $0.388$ & $-0.457$ \\
+REINFORCE & $1.040{\pm}0.000$ & $0.026{\pm}0.000$ & $+0.040{\pm}0.000$ \\
+Transport, $\lambda=0.2$ & $0.535{\pm}0.017$ & $0.414{\pm}0.024$ & $-0.465{\pm}0.017$ \\
+Transport, $\lambda=0.4$ & $0.542{\pm}0.020$ & $0.403{\pm}0.020$ & $-0.458{\pm}0.020$ \\
+\bottomrule
+\end{tabular}
+\end{exhibit}
+\exhibitnote{Exact terminal moments from the deterministic moment recursion, reported as mean $\pm$ standard deviation over five seeds. Initial mean wealth is $\E[X_0]=1$.}
 
+\vspace{0.2cm}
+This benchmark is not pure wealth maximization. With $\gamma=2$, the social objective penalizes high population mean throughout the trajectory, so the optimal policy itself has terminal mean below the initial wealth. The algorithm ``works'' by optimizing this mean-field objective, not by maximizing raw terminal wealth.
+\end{frame}
+
+% -----------------------------------------------------------------------------
 
 % -----------------------------------------------------------------------------
 \begin{frame}{The mean-field term ablation}

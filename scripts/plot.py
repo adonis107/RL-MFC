@@ -11,10 +11,12 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 
 from mfc.visualization import (
+    CONTINUOUS_ENVS,
     adaptive_schedule_dataframe,
     advertising_policy_error_table,
     discrete_transport_tv_bound_table,
     gradient_diagnostics,
+    identification_sweep,
     best_runs_by_label,
     flow_dataframe,
     load_runs,
@@ -209,6 +211,7 @@ def make_standard_outputs(
     correction_replications=0,
     gradient_particles=None,
     correction_particles=None,
+    identification_replications=0,
     allow_empty=False,
 ):
     runs = load_runs(results_root, env=env)
@@ -241,7 +244,7 @@ def make_standard_outputs(
     if env == "advertising":
         save_table(advertising_policy_error_table(runs), output_dir / "policy_error.csv")
 
-    if env in {"lq", "portfolio", "kuramoto"}:
+    if env in CONTINUOUS_ENVS:
         rows = []
         for run in representative_plot_runs(runs):
             metadata = run["metadata"]
@@ -305,6 +308,25 @@ def make_standard_outputs(
         if rows:
             save_table(pd.concat(rows, ignore_index=True), output_dir / "gradient_diagnostics.csv")
 
+    if identification_replications > 0 and env in CONTINUOUS_ENVS:
+        # The sweep characterizes the benchmark rather than one training run, so
+        # it runs once, on the representative transport run of the environment.
+        reference = next(
+            (run for run in representative_plot_runs(runs) if run["metadata"]["algorithm"] == "transport"),
+            None,
+        )
+        if reference is not None:
+            try:
+                sweep = identification_sweep(
+                    reference,
+                    n_replications=identification_replications,
+                    n_particles=gradient_particles,
+                )
+            except ValueError:
+                sweep = None
+            if sweep is not None:
+                save_table(sweep, output_dir / "mixture_identification.csv")
+
     if correction_replications > 0:
         rows = []
         for run in runs:
@@ -336,6 +358,7 @@ def parse_args():
     parser.add_argument("--correction-replications", type=int, default=0)
     parser.add_argument("--gradient-particles", type=int, default=None)
     parser.add_argument("--correction-particles", type=int, default=None)
+    parser.add_argument("--identification-replications", type=int, default=0)
     return parser.parse_args()
 
 
@@ -352,6 +375,7 @@ def main():
             args.correction_replications,
             args.gradient_particles,
             args.correction_particles,
+            args.identification_replications,
             allow_empty=args.env == "all",
         )
 

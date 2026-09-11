@@ -8,6 +8,7 @@ reported numbers can be regenerated from the saved runs rather than transcribed.
 """
 
 import argparse
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -24,16 +25,20 @@ DISPLAY_NAME = {
     "advertising": "Targeted advertising",
     "lq": "Linear--quadratic",
     "portfolio": "Portfolio",
+    "kuramoto": "Kuramoto",
 }
 
-# Population-flow mode used in the headline comparison of each benchmark.
+# Population-flow mode used in the headline comparison of each benchmark. The
+# continuous benchmarks fit the Gaussian-mixture coordinate to a population
+# particle block, so there is no exact-flow arm to compare against there.
 MAIN_FLOW = {
     "twostate": "exact",
     "cybersecurity": "exact",
     "distribution": "exact",
     "advertising": "exact",
-    "lq": "exact",
-    "portfolio": "exact",
+    "lq": "particle",
+    "portfolio": "particle",
+    "kuramoto": "particle",
 }
 
 MAIN_HORIZON = {
@@ -149,6 +154,19 @@ def pretty_label(label):
     if label.startswith("MF-REINFORCE"):
         return f"MF-REINFORCE $\\varepsilon={label.split('eps=', 1)[1].strip()}$"
     return label
+
+
+def scientific(value, digits=1):
+    """LaTeX scientific notation, for quantities spanning several decades."""
+    if value is None or not math.isfinite(float(value)):
+        return "--"
+    value = float(value)
+    if value == 0.0:
+        return "$0$"
+    exponent = int(math.floor(math.log10(abs(value))))
+    if abs(exponent) < 2:
+        return f"${value:.1f}$"
+    return f"${value / 10.0 ** exponent:.{digits}f}\\cdot10^{{{exponent}}}$"
 
 
 def table_environment(body, caption, label, alignment, size=None):
@@ -749,48 +767,151 @@ def gradient_diagnostics_table(figures_root, env):
     if table.empty:
         return None
 
-    lines = [
-        "$\\lambda$ & $\\lVert\\nabla J^\\lambda-\\nabla J\\rVert$ & $/\\lambda^2$ "
-        "& $\\lVert\\E[\\widehat G]-\\nabla J^\\lambda\\rVert$ & $p$ "
-        "& Dispersion & $d\\cdot\\mathrm{MSE}$ & $\\cos$ \\\\",
-        "\\midrule",
+    # The perturbed-gradient oracle only exists where the perturbation is a shift
+    # of the population mean, which the Gaussian-mixture chart is only with one
+    # component. Runs diagnosed against the unperturbed gradient instead have no
+    # closed-form perturbation bias to report.
+    perturbed_reference = "reference_lambda" not in table or bool(
+        (table["reference_lambda"] == table["lambda"]).all()
+    )
+    target = "\\nabla J^\\lambda" if perturbed_reference else "\\nabla J"
+
+    header = ["$\\lambda$"]
+    if perturbed_reference:
+        header += ["$\\lVert\\nabla J^\\lambda-\\nabla J\\rVert$", "$/\\lambda^2$"]
+    header += [
+        f"$\\lVert\\E[\\widehat G]-{target}\\rVert$",
+        "$p$",
+        "Dispersion",
+        "$d\\cdot\\mathrm{MSE}$",
+        "$\\cos$",
     ]
+    # Continuous runs also carry the conditioning of the mixture score Jacobian,
+    # which says how much of the chart the population law identifies.
+    identified = "retained_direction_fraction" in table
+    if identified:
+        header += ["$\\kappa(A)$", "Identified"]
+    lines = [" & ".join(header) + " \\\\", "\\midrule"]
+
     for lambda_value, rows in table.groupby("lambda"):
-        perturbation = rows["perturbation_bias_norm"].mean()
-        bias = rows["bias_norm"].mean()
-        dispersion = rows["estimate_std"].mean()
         dimension = int(rows["n_parameters"].iloc[0])
-        lines.append(
-            " & ".join(
-                [
-                    f"${lambda_value:g}$",
-                    f"${perturbation:.4f}$",
-                    f"${perturbation / lambda_value ** 2:.2f}$",
-                    f"${bias:.4f}$",
-                    f"${rows['bias_chi2_pvalue'].mean():.3f}$",
-                    f"${dispersion:.4f}$",
-                    f"${dimension * rows['mse'].mean():.4f}$",
-                    f"${rows['cosine_similarity'].mean():.3f}$",
-                ]
-            )
-            + " \\\\"
-        )
+        values = [f"${lambda_value:g}$"]
+        if perturbed_reference:
+            perturbation = rows["perturbation_bias_norm"].mean()
+            values += [f"${perturbation:.4f}$", f"${perturbation / lambda_value ** 2:.2f}$"]
+        values += [
+            f"${rows['bias_norm'].mean():.4f}$",
+            f"${rows['bias_chi2_pvalue'].mean():.3f}$",
+            f"${rows['estimate_std'].mean():.4f}$",
+            f"${dimension * rows['mse'].mean():.4f}$",
+            f"${rows['cosine_similarity'].mean():.3f}$",
+        ]
+        if identified:
+            values += [
+                scientific(rows["jacobian_condition_median"].mean()),
+                f"${100.0 * rows['retained_direction_fraction'].mean():.0f}\\%$",
+            ]
+        lines.append(" & ".join(values) + " \\\\")
+
     replications = int(table["n_replications"].iloc[0])
     particles = int(table["diagnostic_n_particles"].iloc[0])
+    reference_sentence = (
+        "The perturbation bias of the gradient, "
+        "$\\lVert\\nabla_\\theta J^\\lambda(\\theta)-\\nabla_\\theta J(\\theta)\\rVert$, is computed from the "
+        "closed-form gradient oracle and is also reported divided by $\\lambda^2$. "
+        if perturbed_reference
+        else "The Gaussian-mixture perturbation has no closed-form perturbed gradient, so the estimator is "
+        "compared to the unperturbed gradient $\\nabla_\\theta J(\\theta)$ of the oracle, which is the target "
+        "of the bias bound. "
+    )
     caption = (
         f"Evaluation-only gradient diagnostics on the {DISPLAY_NAME[env].lower()} benchmark, at the policies saved "
         f"at the end of training and averaged over the five seeds, from {replications} independent replications of "
-        f"the estimator at {particles} particles. Column two is the perturbation bias of the gradient, "
-        "$\\lVert\\nabla_\\theta J^\\lambda(\\theta)-\\nabla_\\theta J(\\theta)\\rVert$, computed from the "
-        "closed-form gradient oracle; column three divides it by $\\lambda^2$. Column four is the bias of the "
-        "estimator with respect to the perturbed gradient it targets, and column five the $p$-value of the "
-        "$\\chi^2$ test that this bias is zero at the available replication count, so a large $p$ means the "
-        "estimator is not measurably biased for $\\nabla_\\theta J^\\lambda$. Column six is the dispersion "
-        "$\\lVert\\operatorname{sd}(\\widehat G)\\rVert$ of the replications and column seven the mean-square "
-        "error scaled by the parameter dimension $d$; it equals the sum of the squares of columns four and six, up to the factor $(R-1)/R$ carried by the unbiased dispersion estimate, and the identity is verified run by run to $2\\%$, which is exactly that factor at $R=50$. "
-        "The last column is the cosine alignment of the mean estimate with the oracle gradient."
+        f"the estimator at {particles} particles. " + reference_sentence + "The bias column is the bias of the "
+        f"estimator with respect to ${target}$, and $p$ is the $p$-value of the $\\chi^2$ test that this bias is "
+        "zero at the available replication count, so a large $p$ means the estimator is not measurably biased. "
+        "The dispersion column is $\\lVert\\operatorname{sd}(\\widehat G)\\rVert$ over the replications and the next "
+        "column the mean-square error scaled by the parameter dimension $d$; it equals the sum of the squares of the "
+        "bias and dispersion columns, up to the factor $(R-1)/R$ carried by the unbiased dispersion estimate, and the "
+        "identity is verified run by run to $2\\%$, which is exactly that factor at $R=50$. "
+        "The last columns are the cosine alignment of the mean estimate with the oracle gradient"
+        + (
+            ", the median over time of the condition number of the mixture score Jacobian $A$, and the share of "
+            "chart directions the identification floor retains in the sensitivity solve."
+            if identified
+            else "."
+        )
     )
-    return table_environment("\n".join(lines), caption, f"tab:gradient-diagnostics-{env}", "lrrrrrrr", size="\\small")
+    alignment = "l" + "r" * (len(header) - 1)
+    return table_environment("\n".join(lines), caption, f"tab:gradient-diagnostics-{env}", alignment, size="\\small")
+
+
+def mixture_identification_table(figures_root, env):
+    """Identification of the Gaussian-mixture chart, and the cost of the floor."""
+    table = load(figures_root, env, "mixture_identification")
+    if table is None or table.empty:
+        return None
+
+    oracle = "cosine_similarity" in table.columns
+    header = [
+        "$K$",
+        "$q_K$",
+        "Floor",
+        "$\\kappa(A)$ med.",
+        "$\\kappa(A)$ max",
+        "Identified",
+        "Dispersion",
+    ]
+    if oracle:
+        header += ["Rel. bias", "Rel. SE", "$\\cos$"]
+    lines = [" & ".join(header) + " \\\\", "\\midrule"]
+
+    previous = None
+    for _, row in table.sort_values(["n_components", "jacobian_floor"]).iterrows():
+        components = int(row["n_components"])
+        if previous is not None and components != previous:
+            lines.append("\\midrule")
+        previous = components
+        values = [
+            f"${components}$",
+            f"${int(row['coordinate_dim'])}$",
+            f"${row['jacobian_floor']:g}$",
+            scientific(row["jacobian_condition_median"]),
+            scientific(row["jacobian_condition_max"]),
+            f"${100.0 * row['retained_direction_fraction']:.0f}\\%$",
+            f"${row['estimate_std']:.3f}$",
+        ]
+        if oracle:
+            values += [
+                f"${row['relative_bias']:.3f}$",
+                f"${row['relative_se']:.3f}$",
+                f"${row['cosine_similarity']:.3f}$",
+            ]
+        lines.append(" & ".join(values) + " \\\\")
+
+    replications = int(table["n_replications"].iloc[0])
+    particles = int(table["diagnostic_n_particles"].iloc[0])
+    lambda_value = float(table["lambda"].iloc[0])
+    caption = (
+        f"Identification of the Gaussian-mixture chart on the {DISPLAY_NAME[env].lower()} benchmark, measured at "
+        f"the policy saved by the transport run at $\\lambda={lambda_value:g}$, from {replications} independent "
+        f"replications of the estimator at {particles} particles. $\\kappa(A)$ is the condition number of the "
+        "mixture score Jacobian, summarized over the time steps at which it is inverted; a chart the population law "
+        "does not identify shows up as a large $\\kappa(A)$. The identification floor drops the singular directions "
+        "of $A$ below the stated fraction of its largest singular value, and the identified column is the share of "
+        "chart directions that survives. Dispersion is $\\lVert\\operatorname{sd}(\\widehat G)\\rVert$ over the "
+        "replications"
+        + (
+            ", and the last three columns are the bias and standard error of the mean estimate relative to the "
+            "gradient oracle, and its cosine alignment with it. Reading the rows at fixed $K$ shows what the floor "
+            "costs; reading them at fixed floor shows how many components the law supports."
+            if oracle
+            else ". Reading the rows at fixed $K$ shows what the floor costs; reading them at fixed floor shows how "
+            "many components the law supports."
+        )
+    )
+    alignment = "l" + "r" * (len(header) - 1)
+    return table_environment("\n".join(lines), caption, f"tab:mixture-identification-{env}", alignment, size="\\small")
 
 
 def objective_bias_scaling(figures_root):
@@ -957,6 +1078,13 @@ def main():
         diagnostics = gradient_diagnostics_table(args.figures_root, env)
         if diagnostics is not None:
             tables[f"gradient_diagnostics_{env}"] = diagnostics
+
+    # Kuramoto is not a reported benchmark, but it is the one continuous law that
+    # identifies more than one mixture component, so its sweep is emitted too.
+    for env in ["lq", "portfolio", "kuramoto"]:
+        identification = mixture_identification_table(args.figures_root, env)
+        if identification is not None:
+            tables[f"mixture_identification_{env}"] = identification
 
     for name, body in tables.items():
         path = output_root / f"{name}.tex"

@@ -1,4 +1,9 @@
-from .diagnostics import gradient_diagnostics, transport_correction_table
+from .diagnostics import (
+    CONTINUOUS_ENVS,
+    gradient_diagnostics,
+    identification_sweep,
+    transport_correction_table,
+)
 from .flows import (
     continuous_moment_flow,
     discrete_law_flow,

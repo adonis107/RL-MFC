@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import subprocess
 import threading
 import time
@@ -16,7 +17,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run the MFC training grid with parallel workers.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "kuramoto", "all"],
         required=True,
     )
     parser.add_argument("--seeds", type=run_plan.parse_seed_list, default=[0, 1, 2, 3, 4])
@@ -38,11 +39,12 @@ def parse_args():
     parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default=None)
     parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
     parser.add_argument("--adaptive-replications", type=int, default=None)
-    parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
+    parser.add_argument("--n-components", type=int, default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
     parser.add_argument("--no-reuse-state-gradient", action="store_true")
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--threads-per-worker", type=int, default=1)
     parser.add_argument("--jobs-file", type=Path, default=None)
     parser.add_argument("--logs-root", type=Path, default=None)
     parser.add_argument("--no-resume", action="store_true")
@@ -82,6 +84,9 @@ def train_args_for(job_spec, seed, args):
         seed=seed,
         results_root=args.results_root,
         simplex_resolution=args.simplex_resolution or 30,
+        # output_directory separates the mixture sizes, so resume and dedup have
+        # to see the same value the launcher puts on the command line.
+        n_components=job_spec.get("n_components") or args.n_components,
     )
 
 
@@ -94,7 +99,7 @@ def log_path_for(output_dir, results_root, logs_root):
 
 
 def build_records(args):
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "kuramoto"]
     selected_envs = envs if args.env == "all" else [args.env]
     results_root = Path(args.results_root)
     logs_root = args.logs_root or results_root / "logs"
@@ -112,6 +117,7 @@ def build_records(args):
                 records.append(
                     {
                         "command": run_plan.command_for(job_spec, seed, args),
+                        "environment": worker_environment(args.threads_per_worker),
                         "output_dir": output_dir,
                         "summary_path": output_dir / "summary.json",
                         "log_path": log_path_for(output_dir, results_root, logs_root),
@@ -136,6 +142,20 @@ def write_jobs_file(records, jobs_file, resume):
             file.write(json.dumps(payload) + "\n")
 
 
+def worker_environment(threads):
+    """Thread budget of one worker process.
+
+    The estimator works on small tensors, so intra-op parallelism buys nothing:
+    one training run measures the same at one thread as at eight. The throughput
+    of a grid is therefore the number of concurrent runs, and leaving every
+    worker free to grab every core only produces oversubscription.
+    """
+    environment = dict(os.environ)
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        environment[name] = str(threads)
+    return environment
+
+
 def run_record(record, index, total, print_lock):
     command = [str(value) for value in record["command"]]
     log_path = record["log_path"]
@@ -148,7 +168,13 @@ def run_record(record, index, total, print_lock):
     with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + json.dumps(command) + "\n\n")
         log.flush()
-        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, cwd=run_plan.ROOT)
+        result = subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            cwd=run_plan.ROOT,
+            env=record["environment"],
+        )
         elapsed = time.perf_counter() - started_at
         log.write(f"\nexit_code={result.returncode} elapsed_seconds={elapsed:.3f}\n")
 

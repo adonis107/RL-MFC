@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pandas as pd
 import torch
 
@@ -9,6 +11,11 @@ from mfc.algorithms import (
 )
 
 from .io import load_env_and_policy, run_label
+
+
+CONTINUOUS_ENVS = {"lq", "portfolio", "kuramoto"}
+IDENTIFICATION_COMPONENTS = (1, 2, 3)
+IDENTIFICATION_FLOORS = (1e-4, 1e-2, 1e-1)
 
 
 def vector_std_norm(values):
@@ -60,59 +67,95 @@ def safe_scalar_ratio(numerator, denominator):
     return float(numerator / denominator)
 
 
-def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=True, n_particles=None):
+def build_estimator(run, seed, n_particles=None, baseline=True, **overrides):
+    """Rebuild the estimator of a saved transport run, for evaluation only."""
     env, policy = load_env_and_policy(run)
     metadata = run["metadata"]
     algorithm_config = metadata["algorithm_config"]
     if metadata["algorithm"] != "transport":
-        raise ValueError("Gradient diagnostics are defined for transport runs.")
+        raise ValueError("Transport diagnostics are defined for transport runs.")
+
+    common = dict(
+        n_particles=n_particles or algorithm_config.get("n_particles") or env.config.n_particles,
+        lambda_=metadata["perturbation"],
+        eta=algorithm_config.get("eta"),
+        horizon=metadata["horizon"],
+        flow=metadata["flow"],
+        n_flow_particles=algorithm_config.get("n_flow_particles"),
+        baseline=baseline,
+        reuse_state_gradient=algorithm_config.get("reuse_state_gradient", True),
+        seed=seed,
+    )
+    if metadata["env"] in CONTINUOUS_ENVS:
+        config = ContinuousTransportConfig(
+            **common,
+            n_law_gradient=algorithm_config.get("n_law_gradient"),
+            n_law_particles=algorithm_config.get("n_law_particles"),
+            n_components=algorithm_config.get("n_components") or ContinuousTransportConfig.n_components,
+        )
+        return env, policy, ContinuousTransport(env, policy=policy, config=replace(config, **overrides))
+
+    config = DiscreteTransportConfig(
+        **common,
+        n_logit_gradient=algorithm_config.get("n_logit_gradient"),
+        simplex_sigma=algorithm_config.get("simplex_sigma", DiscreteTransportConfig.simplex_sigma),
+    )
+    return env, policy, DiscreteTransport(env, policy=policy, config=replace(config, **overrides))
+
+
+def mixture_identification(estimator, seed):
+    """Conditioning of the mixture score Jacobian A along the represented flow.
+
+    A is inverted once per time step from t = 1 on, so the summary covers those
+    matrices. A singular direction below the estimator's floor is dropped by the
+    sensitivity solve, and the retained fraction is therefore how much of the
+    chart the population law actually identifies: it falls well below one exactly
+    when K asks for more components than the law needs.
+    """
+    _, jacobians = estimator.population_coordinates(seed=seed)
+    spectra = [torch.linalg.svdvals(jacobian) for jacobian in jacobians[1:]]
+    if not spectra:
+        return {}
+
+    floor = estimator.config.jacobian_floor
+    largest = torch.stack([spectrum[0] for spectrum in spectra])
+    smallest = torch.stack([spectrum[-1] for spectrum in spectra])
+    conditions = largest / smallest.clamp_min(torch.finfo(largest.dtype).tiny)
+    retained = sum(int((spectrum > floor * spectrum[0]).sum()) for spectrum in spectra)
+    return {
+        "n_components": estimator.config.n_components,
+        "coordinate_dim": estimator.coordinate_dim,
+        "jacobian_floor": floor,
+        "jacobian_condition_median": float(conditions.median()),
+        "jacobian_condition_max": float(conditions.max()),
+        "retained_direction_fraction": retained / (estimator.coordinate_dim * len(spectra)),
+    }
+
+
+def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=True, n_particles=None):
+    metadata = run["metadata"]
+    env, policy, estimator = build_estimator(run, seed, n_particles=n_particles)
+    algorithm_config = metadata["algorithm_config"]
+    lambda_ = metadata["perturbation"]
     if not hasattr(env, "exact_gradient"):
         raise ValueError("This environment does not expose exact_gradient.")
     if isinstance(policy, torch.nn.Module):
         raise ValueError("Exact gradient diagnostics currently require direct tensor policies.")
 
-    lambda_ = metadata["perturbation"]
-    particle_count = n_particles or algorithm_config.get("n_particles")
-    if metadata["env"] in {"lq", "portfolio"}:
-        config = ContinuousTransportConfig(
-            n_particles=particle_count,
-            n_law_gradient=algorithm_config.get("n_law_gradient"),
-            n_law_particles=algorithm_config.get("n_law_particles"),
-            lambda_=lambda_,
-            eta=algorithm_config.get("eta"),
-            rho=algorithm_config.get("rho"),
-            horizon=metadata["horizon"],
-            flow=metadata["flow"],
-            n_flow_particles=algorithm_config.get("n_flow_particles"),
-            law_chart=algorithm_config.get("law_chart") or ContinuousTransportConfig.law_chart,
-            baseline=algorithm_config.get("baseline", True),
-            reuse_state_gradient=algorithm_config.get("reuse_state_gradient", True),
-            seed=seed,
-        )
-        estimator = ContinuousTransport(env, policy=policy, config=config)
-    else:
-        config = DiscreteTransportConfig(
-            n_particles=particle_count,
-            n_logit_gradient=algorithm_config.get("n_logit_gradient"),
-            lambda_=lambda_,
-            eta=algorithm_config.get("eta"),
-            horizon=metadata["horizon"],
-            flow=metadata["flow"],
-            n_flow_particles=algorithm_config.get("n_flow_particles"),
-            simplex_sigma=algorithm_config.get("simplex_sigma", DiscreteTransportConfig.simplex_sigma),
-            baseline=algorithm_config.get("baseline", True),
-            reuse_state_gradient=algorithm_config.get("reuse_state_gradient", True),
-            seed=seed,
-        )
-        estimator = DiscreteTransport(env, policy=policy, config=config)
-
+    config = estimator.config
     estimates = []
     for index in range(n_replications):
         gradient, _ = estimator.estimate_gradient(seed + index * 100_000)
         estimates.append(gradient.detach().reshape(-1).cpu())
 
     estimates = torch.stack(estimates)
-    exact = reward_gradient(env, policy, lambda_=lambda_).detach().reshape(-1).cpu()
+    # An environment's analytic perturbed gradient models the perturbation as a
+    # shift of the population mean, which is what the Gaussian-mixture chart does
+    # only when it has a single component. With more components the perturbed
+    # objective has no closed form, so the reference is the unperturbed gradient,
+    # which is the quantity the bias theorem bounds anyway.
+    reference_lambda = 0.0 if isinstance(estimator, ContinuousTransport) and config.n_components > 1 else lambda_
+    exact = reward_gradient(env, policy, lambda_=reference_lambda).detach().reshape(-1).cpu()
     error = estimates - exact
     mean_estimate = estimates.mean(dim=0)
     bias_norm = (mean_estimate - exact).norm()
@@ -128,6 +171,7 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         "flow": metadata["flow"],
         "horizon": metadata["horizon"],
         "lambda": lambda_,
+        "reference_lambda": reference_lambda,
         "eta": algorithm_config.get("eta"),
         "n_parameters": n_parameters,
         "diagnostic_n_particles": estimator.n_particles,
@@ -147,56 +191,26 @@ def gradient_diagnostics(run, n_replications=20, seed=0, compare_to_unperturbed=
         "exact_gradient_norm": float(exact_norm),
         "estimate_gradient_norm_mean": float(estimates.norm(dim=1).mean()),
     }
+    if isinstance(estimator, ContinuousTransport):
+        row.update(mixture_identification(estimator, seed))
     if compare_to_unperturbed:
-        exact_zero = reward_gradient(env, policy, lambda_=0.0).detach().reshape(-1).cpu()
-        row["perturbation_bias_norm"] = float((exact - exact_zero).norm())
+        # Comparing the reference to the unperturbed gradient only says something
+        # when the reference is the perturbed one; otherwise the two coincide and
+        # the perturbation bias is simply not available in closed form.
+        if reference_lambda == lambda_:
+            exact_zero = reward_gradient(env, policy, lambda_=0.0).detach().reshape(-1).cpu()
+            row["perturbation_bias_norm"] = float((exact - exact_zero).norm())
+        else:
+            row["perturbation_bias_norm"] = float("nan")
 
     return pd.DataFrame([row])
 
 
 def transport_correction_table(run, n_replications=20, n_particles=None, seed=0):
-    env, policy = load_env_and_policy(run)
     metadata = run["metadata"]
-    algorithm_config = metadata["algorithm_config"]
-    if metadata["algorithm"] != "transport":
-        raise ValueError("Correction diagnostics are defined for transport runs.")
-
+    _, _, estimator = build_estimator(run, seed, n_particles=n_particles, baseline=False)
     lambda_ = metadata["perturbation"]
-    eta = algorithm_config.get("eta") or lambda_
-    particle_count = n_particles or algorithm_config.get("n_particles") or env.config.n_particles
-
-    if metadata["env"] in {"lq", "portfolio", "kuramoto"}:
-        config = ContinuousTransportConfig(
-            n_particles=particle_count,
-            n_law_gradient=algorithm_config.get("n_law_gradient"),
-            n_law_particles=algorithm_config.get("n_law_particles"),
-            lambda_=lambda_,
-            eta=eta,
-            rho=algorithm_config.get("rho"),
-            horizon=metadata["horizon"],
-            flow=metadata["flow"],
-            n_flow_particles=algorithm_config.get("n_flow_particles"),
-            law_chart=algorithm_config.get("law_chart") or ContinuousTransportConfig.law_chart,
-            reuse_state_gradient=algorithm_config.get("reuse_state_gradient", True),
-            seed=seed,
-            baseline=False,
-        )
-        estimator = ContinuousTransport(env, policy=policy, config=config)
-    else:
-        config = DiscreteTransportConfig(
-            n_particles=particle_count,
-            n_logit_gradient=algorithm_config.get("n_logit_gradient"),
-            lambda_=lambda_,
-            eta=eta,
-            horizon=metadata["horizon"],
-            flow=metadata["flow"],
-            n_flow_particles=algorithm_config.get("n_flow_particles"),
-            simplex_sigma=algorithm_config.get("simplex_sigma", DiscreteTransportConfig.simplex_sigma),
-            reuse_state_gradient=algorithm_config.get("reuse_state_gradient", True),
-            seed=seed,
-            baseline=False,
-        )
-        estimator = DiscreteTransport(env, policy=policy, config=config)
+    eta = estimator.eta
 
     rows = []
     full_gradients = []
@@ -206,8 +220,8 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
         base_seed = seed + replication * 100_000
 
         if isinstance(estimator, ContinuousTransport):
-            flow = estimator.mean_field_moment_flow(seed=base_seed + 20_000)
-            sensitivities = estimator.estimate_moment_sensitivities(flow, base_seed + 10_000)
+            flow, score_jacobians = estimator.population_coordinates(seed=base_seed + 20_000)
+            sensitivities = estimator.estimate_coordinate_sensitivities(flow, score_jacobians, base_seed + 10_000)
         else:
             flow, _ = estimator.mean_field_law_flow(seed=base_seed + 20_000)
             sensitivities = estimator.estimate_state_sensitivities(flow, base_seed + 10_000)
@@ -278,3 +292,74 @@ def transport_correction_table(run, n_replications=20, n_particles=None, seed=0)
     table["correction_mean_fraction"] = float(correction_mean.norm() / full_mean.norm().clamp_min(1e-12))
     table["full_policy_mean_cosine"] = float(torch.nn.functional.cosine_similarity(full_mean, policy_mean, dim=0))
     return table
+
+
+def identification_sweep(
+    run,
+    components=IDENTIFICATION_COMPONENTS,
+    floors=IDENTIFICATION_FLOORS,
+    n_replications=20,
+    n_particles=None,
+    seed=0,
+):
+    """Mixture size and identification floor swept at the policy a run saved.
+
+    Two questions are answered on the same reference policy, and neither needs
+    extra training. How many components does the population law identify, read
+    off the conditioning of A and the fraction of chart directions the floor
+    keeps? And how much does the floor itself matter, read off the dispersion of
+    the estimator and, where an environment has a gradient oracle, its bias?
+    """
+    metadata = run["metadata"]
+    if metadata["env"] not in CONTINUOUS_ENVS:
+        raise ValueError("The identification sweep is defined for continuous-state runs.")
+
+    rows = []
+    for n_components in components:
+        for floor in floors:
+            env, policy, estimator = build_estimator(
+                run,
+                seed,
+                n_particles=n_particles,
+                n_components=n_components,
+                jacobian_floor=floor,
+            )
+            estimates = torch.stack(
+                [
+                    estimator.estimate_gradient(seed + index * 100_000)[0].detach().reshape(-1).cpu()
+                    for index in range(n_replications)
+                ]
+            )
+            mean_estimate = estimates.mean(dim=0)
+            estimate_std = vector_std_norm(estimates)
+            row = {
+                "env": metadata["env"],
+                "label": run_label(metadata),
+                "flow": metadata["flow"],
+                "horizon": metadata["horizon"],
+                "seed": metadata["seed"],
+                "lambda": metadata["perturbation"],
+                "eta": estimator.eta,
+                "n_replications": n_replications,
+                "diagnostic_n_particles": estimator.n_particles,
+                **mixture_identification(estimator, seed),
+                "estimate_gradient_norm_mean": float(estimates.norm(dim=1).mean()),
+                "estimate_std": float(estimate_std),
+                "estimate_se": float(estimate_std / n_replications**0.5),
+            }
+
+            # Kuramoto has no gradient oracle and a module policy, so there the
+            # sweep reports conditioning and dispersion only.
+            if hasattr(env, "exact_gradient") and not isinstance(policy, torch.nn.Module):
+                exact = reward_gradient(env, policy, lambda_=0.0).detach().reshape(-1).cpu()
+                bias_norm = (mean_estimate - exact).norm()
+                row["exact_gradient_norm"] = float(exact.norm())
+                row["bias_norm"] = float(bias_norm)
+                row["relative_bias"] = safe_scalar_ratio(bias_norm, exact.norm())
+                row["relative_se"] = safe_scalar_ratio(estimate_std / n_replications**0.5, exact.norm())
+                row["cosine_similarity"] = float(
+                    torch.nn.functional.cosine_similarity(mean_estimate, exact, dim=0)
+                )
+            rows.append(row)
+
+    return pd.DataFrame(rows)

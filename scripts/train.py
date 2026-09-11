@@ -54,6 +54,7 @@ ENVIRONMENTS = {
 
 DISCRETE_ENVS = {"twostate", "cybersecurity", "distribution", "advertising"}
 CONTINUOUS_ENVS = {"lq", "portfolio", "kuramoto"}
+TRANSPORT_ALGORITHMS = {"transport", "adaptive_transport"}
 
 
 def maybe_float(value):
@@ -84,6 +85,9 @@ def output_directory(args):
     label = perturbation_label(args.algorithm, args.perturbation, args.eta)
     if args.algorithm == "mfqlearning":
         label = f"Nm_{args.simplex_resolution}"
+    components = getattr(args, "n_components", None)
+    if components is not None and args.env in CONTINUOUS_ENVS and args.algorithm in TRANSPORT_ALGORITHMS:
+        label = f"{label}_K_{components}"
     name = f"{args.algorithm}_{label}_T_{args.horizon}_{args.flow}_seed_{args.seed}"
     return Path(args.results_root) / args.env / name
 
@@ -186,7 +190,9 @@ def build_algorithm(args, env):
                 n_flow_particles=args.n_flow_particles,
                 n_law_gradient=args.n_law_gradient,
                 n_law_particles=args.n_law_particles,
-                law_chart=args.law_chart,
+                n_components=args.n_components
+                if args.n_components is not None
+                else ContinuousTransportConfig.n_components,
                 baseline=use_baseline,
                 reuse_state_gradient=not args.no_reuse_state_gradient,
                 adaptive_checkpoint_interval=args.adaptive_checkpoint_interval
@@ -226,7 +232,9 @@ def build_algorithm(args, env):
                 n_flow_particles=args.n_flow_particles,
                 n_law_gradient=args.n_law_gradient,
                 n_law_particles=args.n_law_particles,
-                law_chart=args.law_chart,
+                n_components=args.n_components
+                if args.n_components is not None
+                else ContinuousTransportConfig.n_components,
                 baseline=use_baseline,
                 reuse_state_gradient=not args.no_reuse_state_gradient,
             )
@@ -396,6 +404,18 @@ def run_training(args):
     return out_dir
 
 
+def default_flow(args):
+    """Population flow used when --flow is not given.
+
+    The continuous mixture coordinate is fitted to a population particle block,
+    so 'exact' is only available there as a single-Gaussian oracle and cannot be
+    the default. Everywhere else the exact law recursion remains the default.
+    """
+    if args.env in CONTINUOUS_ENVS and args.algorithm in TRANSPORT_ALGORITHMS:
+        return "particle"
+    return "exact"
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train one MFC experiment.")
     parser.add_argument("--env", choices=ENVIRONMENTS, required=True)
@@ -408,7 +428,7 @@ def parse_args():
     parser.add_argument("--perturbation", type=maybe_float, default=None)
     parser.add_argument("--eta", type=maybe_float, default=None)
     parser.add_argument("--horizon", "--T", type=int, required=True)
-    parser.add_argument("--flow", choices=["exact", "particle"], default="exact")
+    parser.add_argument("--flow", choices=["exact", "particle"], default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--results-root", default="results")
     parser.add_argument("--device", default=None)
@@ -424,13 +444,16 @@ def parse_args():
     parser.add_argument("--simplex-resolution", type=int, default=30)
     parser.add_argument("--q-learning-lr-power", type=float, default=0.6)
     parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default="sweep")
-    parser.add_argument("--law-chart", choices=["gaussian", "mean"], default="mean")
+    parser.add_argument("--n-components", type=int, default=None)
     parser.add_argument("--adaptive-checkpoint-interval", type=int, default=None)
     parser.add_argument("--adaptive-replications", type=int, default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
     parser.add_argument("--no-reuse-state-gradient", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.flow is None:
+        args.flow = default_flow(args)
+    return args
 
 
 if __name__ == "__main__":

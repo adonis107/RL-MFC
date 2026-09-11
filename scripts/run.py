@@ -17,22 +17,55 @@ DISCRETE_REFERENCE = {
 CONTINUOUS_REFERENCE = {
     "lq": {"n_particles": 200, "n_gradient": 1},
     "portfolio": {"n_particles": 500, "n_gradient": 1},
+    "kuramoto": {"n_particles": 500, "n_gradient": 1},
 }
+
+# Mixture sizes compared on the continuous benchmarks. The population law decides
+# how many components are identified, so K is swept rather than assumed.
+CONTINUOUS_COMPONENTS = (1, 2, 3)
 
 TRANSPORT_LAMBDAS = (0.05, 0.1, 0.2, 0.4, 0.8)
 TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
 DEFAULT_TRANSPORT_ETA = 0.85
 # Reallocate a fixed transport budget toward the auxiliary sensitivity estimate
 # where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
+# Auxiliary trajectories of the discrete transport arm, the n of T(n + B). These
+# were measured the same way as the continuous splits, against the exact
+# population recursion at 120 replications: the earlier values starved the
+# sensitivity block on every benchmark whose policy is a network. Raising n
+# lowers the dispersion by 4.2x on distribution, 2.0x on advertising and 1.65x on
+# cybersecurity, at the same budget and with an interior optimum in each case.
+# Two-state keeps the proportional allocation: its policy has two parameters, so
+# its auxiliary block was never the constraint.
 TRANSPORT_AUXILIARY_GRADIENTS = {
-    "cybersecurity": 20,
-    "distribution": 64,
-    "lq": 20,
-    "portfolio": 200,
+    "cybersecurity": 51,
+    "distribution": 280,
+    "advertising": 65,
+}
+
+# Split of the matched continuous budget T(M + n + B) between the population
+# block M, the auxiliary block n, and the main trajectories B. M and n are stated
+# and B takes the remainder, so changing one of them cannot silently change what
+# the arm costs. The auxiliary block estimates a q_K by d_theta matrix from n
+# trajectories and the sensitivity recursion amplifies its error once per time
+# step, which is why n has to grow with the number of policy parameters.
+# Each split was chosen by measuring candidate splits of the fixed budget against
+# the benchmark's gradient oracle at 120 replications, scoring them by the
+# mean-square error per update. The auxiliary block is the one that pays: raising
+# n lowers the dispersion and the bias together, the latter because D = -A^-1 B
+# inverts a noisy matrix and that ratio bias shrinks as B is better estimated.
+CONTINUOUS_SPLIT = {
+    "lq": {"population": 150, "auxiliary": 160},
+    "portfolio": {"population": 100, "auxiliary": 700},
+    # Measured at matched budget over 120 replications: this split cuts the
+    # dispersion by 28% at K=1, 38% at K=2 and 69% at K=3 against an even split
+    # of (500, 200, 321), and the squared bias it buys back is under 4% of the
+    # mean-square error at every K.
+    "kuramoto": {"population": 200, "auxiliary": 400},
 }
 
 
-def job(env, algorithm, horizon, flow="exact", perturbation=None, eta=None):
+def job(env, algorithm, horizon, flow="exact", perturbation=None, eta=None, n_components=None):
     return {
         "env": env,
         "algorithm": algorithm,
@@ -40,7 +73,18 @@ def job(env, algorithm, horizon, flow="exact", perturbation=None, eta=None):
         "flow": flow,
         "perturbation": perturbation,
         "eta": eta,
+        "n_components": n_components,
     }
+
+
+def continuous_transport_jobs(env, horizon, lambdas, components=CONTINUOUS_COMPONENTS):
+    """Transport arm of a continuous benchmark: the perturbation grid times the mixture sizes."""
+    return [
+        job(env, "transport", horizon, flow="particle", perturbation=lambda_,
+            eta=DEFAULT_TRANSPORT_ETA, n_components=k)
+        for k in components
+        for lambda_ in lambdas
+    ]
 
 
 def experiment_plan(env):
@@ -84,23 +128,25 @@ def experiment_plan(env):
         return jobs
 
     if env == "lq":
-        jobs = [job(env, "reinforce", 20)]
-        for flow in ("exact", "particle"):
-            jobs.extend(
-                job(env, "transport", 20, flow=flow, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
-                for lambda_ in TRANSPORT_LAMBDAS
-            )
-        return jobs
+        return [job(env, "reinforce", 20)] + continuous_transport_jobs(env, 20, TRANSPORT_LAMBDAS)
 
     if env == "portfolio":
-        jobs = [job(env, "reinforce", 10)]
-        jobs.extend(
-            job(env, "transport", 10, perturbation=lambda_, eta=DEFAULT_TRANSPORT_ETA)
-            for lambda_ in (0.025, 0.05, 0.1, 0.2, 0.4)
-        )
-        return jobs
+        return [job(env, "reinforce", 10)] + continuous_transport_jobs(env, 10, (0.025, 0.05, 0.1, 0.2, 0.4))
+
+    if env == "kuramoto":
+        return [job(env, "reinforce", 20)] + continuous_transport_jobs(env, 20, TRANSPORT_LAMBDAS)
 
     raise ValueError(f"Unknown environment: {env}")
+
+
+def continuous_budget(env, horizon):
+    """Transitions per time step of one update, shared by both arms of a continuous benchmark.
+
+    Transport spends them as M + n + B. REINFORCE has no separate population
+    block, reading the law off its own particles, so it spends all of them on
+    trajectories and the two arms cost the same T(M + n + B).
+    """
+    return round(mf_reference_cost(env, horizon) / horizon) + CONTINUOUS_REFERENCE[env]["n_particles"]
 
 
 def reference_budget(env):
@@ -132,7 +178,18 @@ def fair_run_parameters(job_spec):
         parameters["n_particles"] = ref_particles
         parameters["n_logit_gradient"] = ref_gradient
     elif algorithm == "reinforce":
-        parameters["n_particles"] = max(1, round(base_cost / horizon))
+        parameters["n_particles"] = (
+            continuous_budget(env, horizon)
+            if env in CONTINUOUS_REFERENCE
+            else max(1, round(base_cost / horizon))
+        )
+    elif algorithm == "transport" and env in CONTINUOUS_SPLIT:
+        split = CONTINUOUS_SPLIT[env]
+        parameters["n_flow_particles"] = split["population"]
+        parameters["n_law_gradient"] = split["auxiliary"]
+        parameters["n_particles"] = max(
+            1, continuous_budget(env, horizon) - split["population"] - split["auxiliary"]
+        )
     elif algorithm == "transport":
         per_step_budget = base_cost / horizon
         auxiliary_gradient = TRANSPORT_AUXILIARY_GRADIENTS.get(env)
@@ -151,7 +208,11 @@ def fair_run_parameters(job_spec):
     elif algorithm == "mfqlearning":
         parameters["n_train"] = round(base_cost * (reference["n_train"] if "n_train" in reference else 20_000))
 
-    if job_spec["flow"] == "particle" and algorithm in {"mfreinforce", "transport"}:
+    if (
+        job_spec["flow"] == "particle"
+        and algorithm in {"mfreinforce", "transport"}
+        and "n_flow_particles" not in parameters
+    ):
         parameters["n_flow_particles"] = ref_particles
 
     return parameters
@@ -177,6 +238,8 @@ def command_for(job_spec, seed, args):
 
     if job_spec["perturbation"] is not None:
         command.extend(["--perturbation", str(job_spec["perturbation"])])
+    if job_spec.get("n_components") is not None:
+        command.extend(["--n-components", str(job_spec["n_components"])])
     if job_spec["algorithm"] == "transport":
         eta = args.eta if args.eta is not None else job_spec.get("eta")
         if eta is not None:
@@ -200,6 +263,7 @@ def command_for(job_spec, seed, args):
         if args.n_law_gradient is not None
         else fair_parameters.get("n_law_gradient"),
         "--n-law-particles": args.n_law_particles,
+        "--n-components": args.n_components if job_spec.get("n_components") is None else None,
         "--n-flow-particles": args.n_flow_particles
         if args.n_flow_particles is not None
         else fair_parameters.get("n_flow_particles"),
@@ -213,8 +277,6 @@ def command_for(job_spec, seed, args):
         if value is not None:
             command.extend([flag, str(value)])
 
-    if args.law_chart is not None:
-        command.extend(["--law-chart", args.law_chart])
     if args.baseline:
         command.append("--baseline")
     if args.no_baseline:
@@ -233,7 +295,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Launch the training grid for one environment.")
     parser.add_argument(
         "--env",
-        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "all"],
+        choices=["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "kuramoto", "all"],
         required=True,
     )
     parser.add_argument("--seeds", type=parse_seed_list, default=[0, 1, 2, 3, 4])
@@ -253,7 +315,7 @@ def parse_args():
     parser.add_argument("--simplex-resolution", type=int, default=None)
     parser.add_argument("--q-learning-lr-power", type=float, default=None)
     parser.add_argument("--q-learning-sampling", choices=["sweep", "iid"], default=None)
-    parser.add_argument("--law-chart", choices=["gaussian", "mean"], default=None)
+    parser.add_argument("--n-components", type=int, default=None)
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
     parser.add_argument("--no-reuse-state-gradient", action="store_true")
@@ -266,7 +328,7 @@ def main():
     if args.baseline and args.no_baseline:
         raise ValueError("Use at most one of --baseline and --no-baseline.")
 
-    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
+    envs = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio", "kuramoto"]
     selected_envs = envs if args.env == "all" else [args.env]
 
     commands = []

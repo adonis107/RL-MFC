@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from .mfreinforce import MFReinforce
+from .mixture import GaussianMixture, MixtureConstraints
 from .reinforce import exact_continuous_validation_objective
 from .timing import synchronized_time
 
@@ -634,6 +635,30 @@ def train_adaptive_discrete_transport(env, policy=None, config=AdaptiveDiscreteT
 
 @dataclass(frozen=True)
 class ContinuousTransportConfig:
+    """Configuration of the Gaussian-mixture transport estimator.
+
+    n_particles is the number B of main trajectories, n_law_gradient the number n
+    of auxiliary trajectories, and n_law_particles (through n_flow_particles) the
+    number M of population particles that the mixture is fitted to.
+
+    The block from n_components to mean_radius describes the chart: K components
+    and the bounds of the fitting set that keep EM away from a covariance
+    collapsing onto one observation. jacobian_floor is the local-identification
+    safeguard: it is the smallest singular value of A, relative to its largest,
+    that is still treated as identified. Raising K past what the population law
+    needs leaves the extra components undetermined, and the run then reports
+    dropped directions in the sensitivity_fallbacks history entry.
+
+    Two budget rules are worth knowing. The floor matters more the longer the
+    horizon, because the represented law of a smoothing dynamic drifts toward a
+    single Gaussian and leaves the extra components less identified at every
+    step. And n_law_gradient has to grow with the number of policy parameters,
+    not only satisfy n eta^2 >= 1: B is a q_K by d_theta matrix estimated from
+    n trajectories, and its error is amplified once per time step by the
+    sensitivity recursion. A few dozen auxiliary trajectories are enough for a
+    tabular policy and are not enough for a network.
+    """
+
     n_train: int | None = None
     lr: float | None = None
     n_particles: int | None = None
@@ -643,9 +668,16 @@ class ContinuousTransportConfig:
     validation_interval: int | None = None
     lambda_: float | None = None
     eta: float | None = None
-    rho: float | None = None
-    law_chart: str = "mean"
-    flow: str = "exact"
+    n_components: int = 3
+    em_iterations: int = 50
+    em_tolerance: float = 1e-6
+    weight_floor: float = 1e-4
+    sigma_min: float = 1e-2
+    sigma_max: float = 1e2
+    mean_radius: float | None = 1e3
+    quadrature_nodes: int = 24
+    jacobian_floor: float = 1e-1
+    flow: str = "particle"
     n_flow_particles: int | None = None
     baseline: bool = True
     reuse_state_gradient: bool = True
@@ -681,19 +713,60 @@ class AdaptiveContinuousTransportConfig(ContinuousTransportConfig):
 
 
 class ContinuousTransport:
+    """Transport REINFORCE on the Gaussian-mixture chart of the population law.
+
+    The population law is represented by the coordinate z of a K-component
+    Gaussian mixture, the perturbation is a Gaussian displacement of that
+    coordinate, and the population argument of the policy, reward, and transition
+    is the decoded mixture Gamma_K(z + lambda U). One policy update runs the three
+    independent simulation blocks of Algorithm "Transport REINFORCE":
+
+      1. M population particles, whose empirical law is fitted at every time by
+         the EM rule R_K, give the coordinates z_t and the score Jacobians A_t;
+      2. n auxiliary trajectories at radius eta give the population sensitivities
+         D_t = grad_theta z_t = -A_t^{-1} B_t, recursively in t;
+      3. B main trajectories at radius lambda give the gradient estimate, whose
+         mean-field correction is the coordinate score U_t / lambda contracted
+         with D_t.
+
+    Nothing in the three blocks uses a density or a derivative of the transition
+    kernel: only sampled states and actions, the known policy score, and the
+    known Gaussian-mixture density enter the formulas.
+    """
+
     def __init__(self, env, policy=None, config=ContinuousTransportConfig()):
         if hasattr(env, "n_states"):
             raise TypeError("ContinuousTransport is for continuous state spaces. Use DiscreteTransport instead.")
         if not hasattr(env, "sample_initial"):
             raise TypeError("ContinuousTransport requires an environment with sample_initial.")
+        if config.flow not in {"exact", "particle"}:
+            raise ValueError("flow must be either 'exact' or 'particle'.")
 
         self.env = env
         self.config = config
         self.policy = self._make_policy() if policy is None else policy
-        if config.law_chart not in {"mean", "gaussian"}:
-            raise ValueError("law_chart must be either 'mean' or 'gaussian'.")
-        if config.flow not in {"exact", "particle"}:
-            raise ValueError("flow must be either 'exact' or 'particle'.")
+        self.state_dim = self.measure_state_dim()
+        self.mixture = GaussianMixture(
+            config.n_components,
+            self.state_dim,
+            env.dtype,
+            env.device,
+            MixtureConstraints(
+                weight_floor=config.weight_floor,
+                sigma_min=config.sigma_min,
+                sigma_max=config.sigma_max,
+                mean_radius=config.mean_radius,
+            ),
+        )
+        self.coordinate_dim = self.mixture.coordinate_dim
+        self.sensitivity_fallbacks = 0
+        self.fitted_coordinates = None
+
+    def measure_state_dim(self):
+        generator = torch.Generator(device=self.env.device)
+        generator.manual_seed(self.config.seed)
+        sample = self.env.sample_initial(1, generator)
+        return 1 if sample.ndim <= 1 else sample.shape[-1]
 
     def trainable_parameters(self):
         if isinstance(self.policy, nn.Module):
@@ -732,6 +805,11 @@ class ContinuousTransport:
         return self.n_law_particles if self.config.n_flow_particles is None else self.config.n_flow_particles
 
     @property
+    def n_population_particles(self):
+        """Number M of particles whose empirical law is fitted by the mixture."""
+        return self.n_flow_particles
+
+    @property
     def horizon(self):
         return self.env.config.T if self.config.horizon is None else self.config.horizon
 
@@ -759,12 +837,6 @@ class ContinuousTransport:
         if hasattr(self.env.config, "transport_eta"):
             return self.env.config.transport_eta
         return self.lambda_
-
-    @property
-    def rho(self):
-        if self.config.rho is not None:
-            return self.config.rho
-        return getattr(self.env.config, "rho", 1.0)
 
     @property
     def discount(self):
@@ -815,131 +887,87 @@ class ContinuousTransport:
     def initial_states(self, n_particles, generator):
         return self.env.sample_initial(n_particles, generator)
 
-    def law_argument(self, moment):
+    # ------------------------------------------------------------------
+    # Population argument decoded from a mixture coordinate
+    # ------------------------------------------------------------------
+
+    def particle_coordinates(self, states):
+        """Particle states as a (M, d) matrix, whatever shape the environment uses."""
+        return states.reshape(states.shape[0], self.state_dim)
+
+    def law_features(self, z):
+        """Population statistics of Gamma_K(z), for one coordinate or a batch of them.
+
+        An environment that declares state_law_features is given the exact
+        mixture expectation of those features, computed by Gauss-Hermite
+        quadrature against the known mixture density. Otherwise the environment
+        uses the (mean, variance) convention, which the chart provides in closed
+        form.
+        """
+        if hasattr(self.env, "state_law_features"):
+            points, weights = self.mixture.quadrature(z, self.config.quadrature_nodes)
+            states = points.squeeze(-1) if self.state_dim == 1 else points
+            features = self.env.state_law_features(states)
+            return (features * weights.unsqueeze(-1)).sum(dim=-2)
+
+        mean, covariance = self.mixture.mean_covariance(z)
+        if self.state_dim > 1:
+            raise ValueError(
+                "A multidimensional state space needs an environment that defines state_law_features."
+            )
+        return torch.stack([mean[..., 0], covariance[..., 0, 0]], dim=-1)
+
+    def law_argument(self, features):
         if hasattr(self.env, "law_argument"):
-            return self.env.law_argument(moment)
-        if moment.ndim > 0 and moment.shape[-1] == 2:
-            return moment[..., 0]
-        return moment
+            return self.env.law_argument(features)
+        return features[..., 0]
+
+    def population_law(self, z):
+        """Population argument handed to the environment for the mixture Gamma_K(z)."""
+        return self.law_argument(self.law_features(z))
+
+    # ------------------------------------------------------------------
+    # Simulator access
+    # ------------------------------------------------------------------
 
     def sample_action(self, t, state, law, generator):
         with torch.no_grad():
             if hasattr(self.env, "sample_action"):
-                action = self.env.sample_action(self.policy, t, state, self.law_argument(law), generator)
+                action = self.env.sample_action(self.policy, t, state, law, generator)
             else:
-                action = self.env.policy(self.policy, self.policy_time(t), state, self.law_argument(law)).sample()
+                action = self.env.policy(self.policy, self.policy_time(t), state, law).sample()
         return action.reshape(())
 
     def sample_actions_with_log_probs(self, t, states, law, generator):
-        action_law = self.env.policy(self.policy, self.policy_time(t), states, self.law_argument(law))
+        action_law = self.env.policy(self.policy, self.policy_time(t), states, law)
         with torch.no_grad():
             if hasattr(self.env, "sample_action"):
-                actions = self.env.sample_action(self.policy, t, states, self.law_argument(law), generator)
+                actions = self.env.sample_action(self.policy, t, states, law, generator)
             else:
                 actions = action_law.sample()
         return actions, action_law.log_prob(actions.detach())
 
     def log_prob_gradient(self, t, state, law, action):
-        action_law = self.env.policy(self.policy, self.policy_time(t), state, self.law_argument(law))
+        action_law = self.env.policy(self.policy, self.policy_time(t), state, law)
         log_prob = action_law.log_prob(action)
         grads = torch.autograd.grad(log_prob, self.trainable_parameters(), allow_unused=True)
         return self.flatten_grads(grads)
 
     def sample_next_state(self, t, state, law, action, generator):
         if sample_accepts_time(self.env.sample):
-            return self.env.sample(state, self.law_argument(law), action, generator, t=t).reshape_as(state)
-        return self.env.sample(state, self.law_argument(law), action, generator).reshape_as(state)
-
-    def chart_dim(self):
-        return 1 if self.config.law_chart == "mean" else 2
-
-    def sample_perturbation(self, generator, scale):
-        if hasattr(self.env, "sample_law_perturbation"):
-            return self.env.sample_law_perturbation(generator, scale)
-        if scale <= 0.0:
-            raise ValueError("ContinuousTransport perturbation scales must be positive.")
-        shape = () if self.chart_dim() == 1 else (self.chart_dim(),)
-        beta = self.rho * torch.randn(shape, dtype=self.env.dtype, device=self.env.device, generator=generator)
-        zeta = torch.zeros_like(beta)
-        affine_scale = torch.ones_like(beta)
-        return zeta, beta, affine_scale
-
-    def sample_perturbation_batch(self, n_particles, generator, scale):
-        if hasattr(self.env, "sample_law_perturbation_batch"):
-            return self.env.sample_law_perturbation_batch(n_particles, generator, scale)
-        if scale <= 0.0:
-            raise ValueError("ContinuousTransport perturbation scales must be positive.")
-        shape = (n_particles,) if self.chart_dim() == 1 else (n_particles, self.chart_dim())
-        beta = self.rho * torch.randn(shape, dtype=self.env.dtype, device=self.env.device, generator=generator)
-        zeta = torch.zeros_like(beta)
-        affine_scale = torch.ones_like(beta)
-        return zeta, beta, affine_scale
-
-    def perturb_moment(self, moment, zeta, beta, scale):
-        if hasattr(self.env, "perturb_law_features"):
-            return self.env.perturb_law_features(moment, zeta, beta, scale)
-        if self.config.law_chart == "mean":
-            mean = moment[0] + scale * beta
-            variance = moment[1].expand_as(mean)
-            return torch.stack([mean, variance], dim=-1)
-        log_std = 0.5 * torch.log(moment[1].clamp_min(1e-12))
-        mean = moment[0] + scale * beta[..., 0]
-        perturbed_log_std = log_std + scale * beta[..., 1]
-        variance = torch.exp(2.0 * perturbed_log_std)
-        return torch.stack([mean, variance], dim=-1)
-
-    def transport_score(self, moment, perturbed_moment, zeta, beta, affine_scale, scale, sensitivity):
-        if hasattr(self.env, "transport_score"):
-            return self.env.transport_score(moment, perturbed_moment, zeta, beta, affine_scale, scale, sensitivity)
-        coefficient = beta / (scale * self.rho**2)
-        if self.config.law_chart == "mean":
-            return coefficient.unsqueeze(-1) * sensitivity[0]
-        if self.config.law_chart == "gaussian":
-            return (coefficient.unsqueeze(-1) * sensitivity).sum(dim=-2)
-        raise ValueError(f"Unknown law chart: {self.config.law_chart}")
-
-    def mean_field_moment_flow(self, horizon=None, seed=None):
-        horizon = self.horizon if horizon is None else horizon
-
-        if self.config.flow == "exact" and hasattr(self.env, "moment_flow"):
-            with torch.no_grad():
-                means, variances = self.env.moment_flow(self.policy, lambda_=0.0)
-            moments = torch.stack([means[: horizon + 1], variances[: horizon + 1].clamp_min(1e-12)], dim=-1)
-            return list(moments.detach())
-
-        generator = torch.Generator(device=self.env.device)
-        generator.manual_seed(self.config.seed if seed is None else seed)
-        states = self.env.sample_initial(self.n_flow_particles, generator)
-        if hasattr(self.env, "empirical_law"):
-            moments = [self.env.empirical_law(states).detach()]
-        else:
-            moments = [torch.stack([states.mean(), states.var(unbiased=False).clamp_min(1e-12)]).detach()]
-
-        for t in range(horizon):
-            moment = moments[-1]
-            actions = self.sample_actions_for_population(t, states, moment, generator)
-            with torch.no_grad():
-                states = self.sample_next_states_for_population(t, states, moment, actions, generator)
-            if hasattr(self.env, "empirical_law"):
-                moments.append(self.env.empirical_law(states).detach())
-            else:
-                moments.append(torch.stack([states.mean(), states.var(unbiased=False).clamp_min(1e-12)]).detach())
-
-        return moments
-
-    def mean_field_mean_flow(self, horizon=None, seed=None):
-        return [moment[0] for moment in self.mean_field_moment_flow(horizon=horizon, seed=seed)]
+            return self.env.sample(state, law, action, generator, t=t).reshape_as(state)
+        return self.env.sample(state, law, action, generator).reshape_as(state)
 
     def sample_actions_for_population(self, t, states, law, generator):
         with torch.no_grad():
             if hasattr(self.env, "sample_action"):
-                return self.env.sample_action(self.policy, t, states, self.law_argument(law), generator)
-            return self.env.policy(self.policy, self.policy_time(t), states, self.law_argument(law)).sample()
+                return self.env.sample_action(self.policy, t, states, law, generator)
+            return self.env.policy(self.policy, self.policy_time(t), states, law).sample()
 
     def sample_next_states_for_population(self, t, states, law, actions, generator):
         if sample_accepts_time(self.env.sample):
-            return self.env.sample(states, self.law_argument(law), actions, generator, t=t)
-        return self.env.sample(states, self.law_argument(law), actions, generator)
+            return self.env.sample(states, law, actions, generator, t=t)
+        return self.env.sample(states, law, actions, generator)
 
     def discounted_returns(self, rewards, terminal_reward):
         values = [None] * (len(rewards) + 1)
@@ -948,28 +976,145 @@ class ContinuousTransport:
             values[t] = rewards[t] + self.discount * values[t + 1]
         return values
 
-    def law_feature_dim(self):
-        return getattr(self.env, "law_feature_dim", 2)
+    def sample_perturbations(self, shape, generator):
+        """Standard Gaussian displacements of the mixture coordinate."""
+        return torch.randn(
+            *shape, self.coordinate_dim, dtype=self.env.dtype, device=self.env.device, generator=generator
+        )
 
-    def state_law_features(self, states):
-        if hasattr(self.env, "state_law_features"):
-            return self.env.state_law_features(states)
-        return torch.stack([states, states.square()], dim=-1)
+    # ------------------------------------------------------------------
+    # Block 1: population coordinates
+    # ------------------------------------------------------------------
 
-    def batched_log_prob_gradients(self, action_log_probs, features, feature_dim):
-        """Score gradients of the law features, batched over target time and feature.
+    def population_coordinates(self, horizon=None, seed=None, jacobians=True):
+        """Fit the mixture coordinate along the represented flow.
 
-        Entry [target_t - 1, feature_index] is the gradient of the log-probabilities
-        up to target_t weighted by that feature at target_t, which is what each
-        sensitivity estimate needs. One vmapped backward pass replaces the
-        horizon * feature_dim sequential passes over the same graph.
+        Returns the coordinates z_0, ..., z_T and, when requested, the empirical
+        score Jacobians A_t = M^{-1} sum_i D_z psi_K(X_t^i, z_t). With
+        flow='exact' and an environment exposing its analytic moment flow, the
+        coordinate is read off that flow instead of a particle fit; this is the
+        oracle-population variant and is only defined for a single component.
+        """
+        horizon = self.horizon if horizon is None else horizon
+        if self.config.flow == "exact" and hasattr(self.env, "moment_flow"):
+            return self.exact_population_coordinates(horizon, jacobians=jacobians)
+
+        generator = torch.Generator(device=self.env.device)
+        generator.manual_seed(self.config.seed if seed is None else seed)
+        states = self.env.sample_initial(self.n_population_particles, generator)
+
+        coordinates = []
+        score_jacobians = []
+        coordinate = None
+        for t in range(horizon + 1):
+            particles = self.particle_coordinates(states.detach())
+            # Each fit is warm-started from the fit of the same time at the
+            # previous policy update when there is one, and from the previous
+            # time otherwise. This is what keeps the fitted coordinate on the
+            # same local root of the likelihood equation as theta moves, and it
+            # starts EM from a nearly converged fit after the first update.
+            previous = self.fitted_coordinates
+            warm_start = previous[t] if previous is not None and t < len(previous) else coordinate
+            coordinate = self.mixture.fit(
+                particles,
+                warm_start=warm_start,
+                iterations=self.config.em_iterations,
+                tolerance=self.config.em_tolerance,
+            )
+            coordinates.append(coordinate)
+            if jacobians:
+                score_jacobians.append(self.mixture.mean_score_jacobian(particles, coordinate))
+            if t == horizon:
+                break
+
+            law = self.population_law(coordinate)
+            actions = self.sample_actions_for_population(t, states, law, generator)
+            with torch.no_grad():
+                states = self.sample_next_states_for_population(t, states, law, actions, generator)
+
+        self.fitted_coordinates = coordinates
+        return coordinates, score_jacobians
+
+    def exact_population_coordinates(self, horizon, jacobians=True):
+        """Represented flow of an environment that exposes its analytic moments."""
+        if self.config.n_components != 1:
+            raise ValueError(
+                "flow='exact' reads a single Gaussian off the analytic moment flow; "
+                "use flow='particle' with n_components > 1."
+            )
+
+        with torch.no_grad():
+            means, variances = self.env.moment_flow(self.policy, lambda_=0.0)
+        means = means[: horizon + 1].detach()
+        variances = variances[: horizon + 1].detach().clamp_min(self.config.sigma_min**2)
+
+        coordinates = []
+        score_jacobians = []
+        for t in range(horizon + 1):
+            weights = torch.ones(1, dtype=self.env.dtype, device=self.env.device)
+            mean = means[t].reshape(1, 1)
+            scale_tril = variances[t].sqrt().reshape(1, 1, 1)
+            coordinate = self.mixture.encode(weights, mean, scale_tril)
+            coordinates.append(coordinate)
+            if jacobians:
+                # The represented law is exactly Gamma_K(z_t) here, so the
+                # expectation defining A_t is a quadrature against that mixture.
+                points, quadrature_weights = self.mixture.quadrature(coordinate, self.config.quadrature_nodes)
+                score_jacobians.append(
+                    self.mixture.mean_score_jacobian(points, coordinate, weights=quadrature_weights)
+                )
+
+        return coordinates, score_jacobians
+
+    # ------------------------------------------------------------------
+    # Block 2: population sensitivity D_t = grad_theta z_t
+    # ------------------------------------------------------------------
+
+    def solve_sensitivity(self, jacobian, b):
+        """D = -A^{-1} B, guarded against a mixture fit that is not locally identified.
+
+        A is invertible only where the local-identification assumption holds. It
+        degenerates when the represented law does not really need K components:
+        the likelihood is then flat along a reparametrization that leaves the
+        decoded mixture unchanged. Such a direction carries no information about
+        the coordinate, yet inverting it would feed an arbitrarily large
+        correction into the gradient. The singular directions below
+        jacobian_floor times the largest singular value are therefore dropped,
+        which is the zero-inverse rule of the assumption applied one direction at
+        a time. Dropped directions are counted so that a run can be diagnosed.
+        """
+        if not torch.isfinite(jacobian).all():
+            self.sensitivity_fallbacks += self.coordinate_dim
+            return torch.zeros_like(b)
+
+        left, singular_values, right = torch.linalg.svd(jacobian)
+        retained = singular_values > self.config.jacobian_floor * singular_values[0]
+        self.sensitivity_fallbacks += int((~retained).sum().item())
+        inverse = torch.where(retained, 1.0 / singular_values.clamp_min(torch.finfo(jacobian.dtype).tiny), 0.0)
+        sensitivity = -(right.transpose(-1, -2) * inverse) @ (left.transpose(-1, -2) @ b)
+
+        # A sensitivity that has overflowed would otherwise enter the coordinate
+        # score of every later time step and turn the whole recursion into NaN,
+        # which hides the time step where the estimate actually broke down.
+        if not torch.isfinite(sensitivity).all():
+            self.sensitivity_fallbacks += self.coordinate_dim
+            return torch.zeros_like(b)
+        return sensitivity
+
+    def batched_log_prob_gradients(self, action_log_probs, scores, score_dim):
+        """Score gradients weighted by the mixture score, batched over time and coordinate.
+
+        Entry [target_t - 1, j] is sum_r psi_K(X_{target_t}^r, z_{target_t})_j times
+        the gradient of the log-probabilities of trajectory r up to target_t, which
+        is the policy-score part of B_{target_t}. One vmapped backward pass replaces
+        the horizon * q_K sequential passes over the same graph.
         """
         log_probs = torch.stack(action_log_probs)
-        n_outputs = self.horizon * feature_dim
+        n_outputs = self.horizon * score_dim
         weights = torch.zeros(n_outputs, *log_probs.shape, dtype=self.env.dtype, device=self.env.device)
         for target_t in range(1, self.horizon + 1):
-            for feature_index in range(feature_dim):
-                weights[(target_t - 1) * feature_dim + feature_index, :target_t] = features[target_t][..., feature_index]
+            for index in range(score_dim):
+                weights[(target_t - 1) * score_dim + index, :target_t] = scores[target_t][..., index]
 
         parameters = self.trainable_parameters()
         grads = torch.autograd.grad(
@@ -981,71 +1126,74 @@ class ContinuousTransport:
                 pieces.append(torch.zeros(n_outputs, parameter.numel(), dtype=self.env.dtype, device=self.env.device))
             else:
                 pieces.append(grad.reshape(n_outputs, -1))
-        return torch.cat(pieces, dim=1).reshape(self.horizon, feature_dim, self.n_parameters)
+        return torch.cat(pieces, dim=1).reshape(self.horizon, score_dim, self.n_parameters)
 
-    def estimate_moment_sensitivities(self, moments, seed, eta=None):
+    def estimate_coordinate_sensitivities(self, coordinates, score_jacobians, seed, eta=None):
+        """Model-free estimate of D_t = grad_theta z_t from n auxiliary trajectories.
+
+        The fitted coordinate solves E[psi_K(X_t, z_t)] = 0. Differentiating that
+        finite-dimensional equation in theta gives D_t = -A_t^{-1} B_t, where B_t
+        is the covariance between the mixture score at time t and the score of the
+        trajectory law up to time t. The latter is the policy score plus the
+        coordinate score eta^{-1} D_s^T U_s of the earlier perturbations, so the
+        recursion consumes the sensitivities already estimated at times s < t and
+        starts from D_0 = 0.
+        """
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
         eta = self.eta if eta is None else eta
-        feature_dim = self.law_feature_dim()
+        n_trajectories = self.n_law_gradient
+        score_dim = self.coordinate_dim
 
         sensitivities = [
-            torch.zeros(feature_dim, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
+            torch.zeros(score_dim, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
             for _ in range(self.horizon + 1)
         ]
         if self.horizon == 0:
             return sensitivities
 
-        states = [self.initial_states(self.n_law_gradient, generator)]
+        states = [self.initial_states(n_trajectories, generator)]
         action_log_probs = []
         perturbations = []
 
         for t in range(self.horizon):
-            zeta, beta, affine_scale = self.sample_perturbation_batch(self.n_law_gradient, generator, eta)
-            perturbed_moment = self.perturb_moment(moments[t], zeta, beta, eta)
-            action, log_prob = self.sample_actions_with_log_probs(t, states[-1], perturbed_moment, generator)
+            perturbation = self.sample_perturbations((n_trajectories,), generator)
+            law = self.population_law(coordinates[t] + eta * perturbation)
+            action, log_prob = self.sample_actions_with_log_probs(t, states[-1], law, generator)
             action_log_probs.append(log_prob)
-            perturbations.append((zeta, beta, affine_scale, perturbed_moment))
+            perturbations.append(perturbation)
 
             with torch.no_grad():
-                states.append(self.sample_next_state(t, states[-1], perturbed_moment, action, generator))
+                states.append(self.sample_next_state(t, states[-1], law, action, generator))
 
-        features = [self.state_law_features(state).detach() for state in states]
-        log_prob_gradients = self.batched_log_prob_gradients(action_log_probs, features, feature_dim)
+        mixture_scores = [
+            self.mixture.score(self.particle_coordinates(state.detach()), coordinate)
+            for state, coordinate in zip(states, coordinates)
+        ]
+        policy_score_terms = self.batched_log_prob_gradients(action_log_probs, mixture_scores, score_dim)
 
-        # The score is a prefix sum over time: each target_t only adds the term for
-        # the step just completed, whose sensitivity was finalized last iteration.
-        score = torch.zeros(self.n_law_gradient, self.n_parameters, dtype=self.env.dtype, device=self.env.device)
+        # The trajectory score is a prefix sum over time: each target_t only adds
+        # the term for the step just completed, whose sensitivity was finalized on
+        # the previous iteration.
+        coordinate_score = torch.zeros(
+            n_trajectories, self.n_parameters, dtype=self.env.dtype, device=self.env.device
+        )
         for target_t in range(1, self.horizon + 1):
-            zeta, beta, affine_scale, perturbed_moment = perturbations[target_t - 1]
-            score = score + self.transport_score(
-                moments[target_t - 1], perturbed_moment, zeta, beta, affine_scale, eta, sensitivities[target_t - 1]
-            )
-
-            estimates = []
-            for feature_index in range(feature_dim):
-                feature = features[target_t][..., feature_index]
-                estimate = (feature.unsqueeze(-1) * score).sum(dim=0)
-                estimate = estimate + log_prob_gradients[target_t - 1, feature_index]
-                estimates.append(estimate / self.n_law_gradient)
-
-            if hasattr(self.env, "state_law_features"):
-                for feature_index in range(feature_dim):
-                    sensitivities[target_t][feature_index] = estimates[feature_index]
-                continue
-
-            mean_gradient = estimates[0]
-            variance_gradient = estimates[1] - 2.0 * moments[target_t][0] * mean_gradient
-
-            sensitivities[target_t][0] = mean_gradient
-            sensitivities[target_t][1] = variance_gradient / (2.0 * moments[target_t][1].clamp_min(1e-12))
+            coordinate_score = coordinate_score + perturbations[target_t - 1] @ sensitivities[target_t - 1] / eta
+            b = mixture_scores[target_t].T @ coordinate_score + policy_score_terms[target_t - 1]
+            sensitivities[target_t] = self.solve_sensitivity(score_jacobians[target_t], b / n_trajectories)
 
         return sensitivities
 
-    def estimate_mean_sensitivities(self, moments, seed):
-        return [sensitivity[0] for sensitivity in self.estimate_moment_sensitivities(moments, seed)]
+    # ------------------------------------------------------------------
+    # Block 3: policy gradient
+    # ------------------------------------------------------------------
 
-    def trajectory_gradient(self, moments, sensitivities, seed, lambda_=None):
+    def coordinate_score(self, perturbation, sensitivity, lambda_):
+        """Mean-field correction D_t^T U_t / lambda of one perturbed population argument."""
+        return perturbation @ sensitivity / lambda_
+
+    def trajectory_gradient(self, coordinates, sensitivities, seed, lambda_=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
         lambda_ = self.lambda_ if lambda_ is None else lambda_
@@ -1057,37 +1205,34 @@ class ContinuousTransport:
         score_terms = []
 
         for t in range(self.horizon):
-            moment = moments[t]
-            base_action = self.sample_action(t, base_state, moment, generator)
-            zeta, beta, affine_scale = self.sample_perturbation(generator, lambda_)
-            perturbed_moment = self.perturb_moment(moment, zeta, beta, lambda_)
-            action = self.sample_action(t, state, perturbed_moment, generator)
+            law = self.population_law(coordinates[t])
+            base_action = self.sample_action(t, base_state, law, generator)
+            perturbation = self.sample_perturbations((), generator)
+            perturbed_law = self.population_law(coordinates[t] + lambda_ * perturbation)
+            action = self.sample_action(t, state, perturbed_law, generator)
 
-            law_score = self.transport_score(
-                moment, perturbed_moment, zeta, beta, affine_scale, lambda_, sensitivities[t]
-            )
-            action_score = self.log_prob_gradient(t, state, perturbed_moment, action)
+            law_score = self.coordinate_score(perturbation, sensitivities[t], lambda_)
+            action_score = self.log_prob_gradient(t, state, perturbed_law, action)
             score_terms.append(law_score + action_score)
-            base_rewards.append(self.env.reward(base_state, self.law_argument(moment), base_action))
-            rewards.append(self.env.reward(state, self.law_argument(perturbed_moment), action))
+            base_rewards.append(self.env.reward(base_state, law, base_action))
+            rewards.append(self.env.reward(state, perturbed_law, action))
 
             with torch.no_grad():
-                base_state = self.sample_next_state(t, base_state, moment, base_action, generator)
-                state = self.sample_next_state(t, state, perturbed_moment, action, generator)
+                base_state = self.sample_next_state(t, base_state, law, base_action, generator)
+                state = self.sample_next_state(t, state, perturbed_law, action, generator)
 
-        zeta, beta, affine_scale = self.sample_perturbation(generator, lambda_)
-        terminal_moment = self.perturb_moment(moments[-1], zeta, beta, lambda_)
-        terminal_reward = self.env.terminal_reward(state, self.law_argument(terminal_moment))
-        base_terminal_reward = self.env.terminal_reward(base_state, self.law_argument(moments[-1]))
-        score_terms.append(
-            self.transport_score(moments[-1], terminal_moment, zeta, beta, affine_scale, lambda_, sensitivities[-1])
-        )
+        terminal_law = self.population_law(coordinates[-1])
+        perturbation = self.sample_perturbations((), generator)
+        perturbed_terminal_law = self.population_law(coordinates[-1] + lambda_ * perturbation)
+        terminal_reward = self.env.terminal_reward(state, perturbed_terminal_law)
+        base_terminal_reward = self.env.terminal_reward(base_state, terminal_law)
+        score_terms.append(self.coordinate_score(perturbation, sensitivities[-1], lambda_))
 
         returns = self.discounted_returns(rewards, terminal_reward)
         base_return = self.discounted_returns(base_rewards, base_terminal_reward)[0]
         return torch.stack(score_terms), torch.stack(returns), base_return
 
-    def batched_trajectory_components(self, moments, seed, lambda_=None):
+    def batched_trajectory_components(self, coordinates, seed, lambda_=None):
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(seed)
         lambda_ = self.lambda_ if lambda_ is None else lambda_
@@ -1100,26 +1245,27 @@ class ContinuousTransport:
         perturbations = []
 
         for t in range(self.horizon):
-            moment = moments[t]
-            base_action, _ = self.sample_actions_with_log_probs(t, base_states, moment, generator)
-            zeta, beta, affine_scale = self.sample_perturbation_batch(self.n_particles, generator, lambda_)
-            perturbed_moment = self.perturb_moment(moment, zeta, beta, lambda_)
-            action, log_prob = self.sample_actions_with_log_probs(t, states, perturbed_moment, generator)
+            law = self.population_law(coordinates[t])
+            base_action, _ = self.sample_actions_with_log_probs(t, base_states, law, generator)
+            perturbation = self.sample_perturbations((self.n_particles,), generator)
+            perturbed_law = self.population_law(coordinates[t] + lambda_ * perturbation)
+            action, log_prob = self.sample_actions_with_log_probs(t, states, perturbed_law, generator)
 
-            perturbations.append((moment, perturbed_moment, zeta, beta, affine_scale))
+            perturbations.append(perturbation)
             action_log_probs.append(log_prob)
-            base_rewards.append(self.env.reward(base_states, self.law_argument(moment), base_action))
-            rewards.append(self.env.reward(states, self.law_argument(perturbed_moment), action))
+            base_rewards.append(self.env.reward(base_states, law, base_action))
+            rewards.append(self.env.reward(states, perturbed_law, action))
 
             with torch.no_grad():
-                base_states = self.sample_next_state(t, base_states, moment, base_action, generator)
-                states = self.sample_next_state(t, states, perturbed_moment, action, generator)
+                base_states = self.sample_next_state(t, base_states, law, base_action, generator)
+                states = self.sample_next_state(t, states, perturbed_law, action, generator)
 
-        zeta, beta, affine_scale = self.sample_perturbation_batch(self.n_particles, generator, lambda_)
-        terminal_moment = self.perturb_moment(moments[-1], zeta, beta, lambda_)
-        terminal_reward = self.env.terminal_reward(states, self.law_argument(terminal_moment))
-        base_terminal_reward = self.env.terminal_reward(base_states, self.law_argument(moments[-1]))
-        perturbations.append((moments[-1], terminal_moment, zeta, beta, affine_scale))
+        terminal_law = self.population_law(coordinates[-1])
+        perturbation = self.sample_perturbations((self.n_particles,), generator)
+        perturbed_terminal_law = self.population_law(coordinates[-1] + lambda_ * perturbation)
+        terminal_reward = self.env.terminal_reward(states, perturbed_terminal_law)
+        base_terminal_reward = self.env.terminal_reward(base_states, terminal_law)
+        perturbations.append(perturbation)
 
         returns = torch.stack(self.discounted_returns(rewards, terminal_reward))
         base_return = self.discounted_returns(base_rewards, base_terminal_reward)[0]
@@ -1127,27 +1273,28 @@ class ContinuousTransport:
         action_gradient = self.flat_grad((torch.stack(action_log_probs) * advantages[:-1].detach()).sum())
         return action_gradient, advantages.detach(), perturbations, base_return.mean()
 
-    def combine_batched_trajectory_components(self, action_gradient, weights, perturbations, sensitivities, lambda_=None):
+    def combine_batched_trajectory_components(
+        self, action_gradient, weights, perturbations, sensitivities, lambda_=None
+    ):
         lambda_ = self.lambda_ if lambda_ is None else lambda_
         law_gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
-        for index, (moment, perturbed_moment, zeta, beta, affine_scale) in enumerate(perturbations):
-            law_score = self.transport_score(moment, perturbed_moment, zeta, beta, affine_scale, lambda_, sensitivities[index])
+        for index, perturbation in enumerate(perturbations):
+            law_score = self.coordinate_score(perturbation, sensitivities[index], lambda_)
             law_gradient = law_gradient + (law_score * weights[index].unsqueeze(-1)).sum(dim=0)
         return (action_gradient + law_gradient) / self.n_particles
 
-    def batched_trajectory_gradient(self, moments, sensitivities, seed):
-        action_gradient, weights, perturbations, base_return = self.batched_trajectory_components(moments, seed)
+    def batched_trajectory_gradient(self, coordinates, sensitivities, seed):
+        action_gradient, weights, perturbations, base_return = self.batched_trajectory_components(coordinates, seed)
         gradient = self.combine_batched_trajectory_components(action_gradient, weights, perturbations, sensitivities)
         return gradient, base_return
 
     def estimate_gradient(self, seed):
-        moments = self.mean_field_moment_flow(seed=seed + 20_000)
-        shared_sensitivities = None
-        if self.config.reuse_state_gradient:
-            shared_sensitivities = self.estimate_moment_sensitivities(moments, seed + 10_000)
+        self.sensitivity_fallbacks = 0
+        coordinates, score_jacobians = self.population_coordinates(seed=seed + 20_000)
 
-        if shared_sensitivities is not None:
-            return self.batched_trajectory_gradient(moments, shared_sensitivities, seed)
+        if self.config.reuse_state_gradient:
+            sensitivities = self.estimate_coordinate_sensitivities(coordinates, score_jacobians, seed + 10_000)
+            return self.batched_trajectory_gradient(coordinates, sensitivities, seed)
 
         gradient = torch.zeros(self.n_parameters, dtype=self.env.dtype, device=self.env.device)
         scores = []
@@ -1155,11 +1302,12 @@ class ContinuousTransport:
         objectives = []
 
         for particle in range(self.n_particles):
-            sensitivities = shared_sensitivities
-            if sensitivities is None:
-                sensitivities = self.estimate_moment_sensitivities(moments, seed + 10_000 + particle)
-
-            score, trajectory_returns, objective = self.trajectory_gradient(moments, sensitivities, seed + particle)
+            sensitivities = self.estimate_coordinate_sensitivities(
+                coordinates, score_jacobians, seed + 10_000 + particle
+            )
+            score, trajectory_returns, objective = self.trajectory_gradient(
+                coordinates, sensitivities, seed + particle
+            )
             objectives.append(objective.detach())
 
             if self.config.baseline:
@@ -1184,20 +1332,20 @@ class ContinuousTransport:
 
         n_particles = self.n_particles if n_particles is None else n_particles
         horizon = getattr(self.env.config, "T_val", self.horizon) if horizon is None else horizon
-        moments = self.mean_field_moment_flow(horizon=horizon, seed=seed)
+        coordinates, _ = self.population_coordinates(horizon=horizon, seed=seed, jacobians=False)
         generator = torch.Generator(device=self.env.device)
         generator.manual_seed(self.config.seed if seed is None else seed)
 
         states = self.env.sample_initial(n_particles, generator)
         rewards = []
         for t in range(horizon):
-            moment = moments[t]
-            actions = self.sample_actions_for_population(t, states, moment, generator)
-            rewards.append(self.env.reward(states, self.law_argument(moment), actions))
+            law = self.population_law(coordinates[t])
+            actions = self.sample_actions_for_population(t, states, law, generator)
+            rewards.append(self.env.reward(states, law, actions))
             with torch.no_grad():
-                states = self.sample_next_states_for_population(t, states, moment, actions, generator)
+                states = self.sample_next_states_for_population(t, states, law, actions, generator)
 
-        terminal = self.env.terminal_reward(states, self.law_argument(moments[-1]))
+        terminal = self.env.terminal_reward(states, self.population_law(coordinates[-1]))
         return self.discounted_returns(rewards, terminal)[0].mean()
 
     def train(self):
@@ -1208,6 +1356,7 @@ class ContinuousTransport:
             "objective": [],
             "validation_objective": [],
             "gradient_norm": [],
+            "sensitivity_fallbacks": [],
             "train_step_seconds": [],
             "validation_seconds": [],
             "setup_seconds": [setup_seconds],
@@ -1226,6 +1375,7 @@ class ContinuousTransport:
 
             history["objective"].append(objective_value)
             history["gradient_norm"].append(gradient_norm_value)
+            history["sensitivity_fallbacks"].append(self.sensitivity_fallbacks)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)
@@ -1236,6 +1386,7 @@ class ContinuousTransport:
                 history["validation_objective"].append(validation_value)
 
         return self.policy, history
+
 
 
 class AdaptiveContinuousTransport(ContinuousTransport):
@@ -1311,11 +1462,15 @@ class AdaptiveContinuousTransport(ContinuousTransport):
         g_mm = []
         for replication in range(config.adaptive_replications):
             base_seed = seed + replication * 100_000
-            moments = self.mean_field_moment_flow(seed=base_seed + 20_000)
-            sensitivities_plus = self.estimate_moment_sensitivities(moments, base_seed + 10_000, eta=eta_plus)
-            sensitivities_minus = self.estimate_moment_sensitivities(moments, base_seed + 40_000, eta=eta_minus)
-            components_plus = self.batched_trajectory_components(moments, base_seed, lambda_=lambda_plus)
-            components_minus = self.batched_trajectory_components(moments, base_seed + 50_000, lambda_=lambda_minus)
+            coordinates, score_jacobians = self.population_coordinates(seed=base_seed + 20_000)
+            sensitivities_plus = self.estimate_coordinate_sensitivities(
+                coordinates, score_jacobians, base_seed + 10_000, eta=eta_plus
+            )
+            sensitivities_minus = self.estimate_coordinate_sensitivities(
+                coordinates, score_jacobians, base_seed + 40_000, eta=eta_minus
+            )
+            components_plus = self.batched_trajectory_components(coordinates, base_seed, lambda_=lambda_plus)
+            components_minus = self.batched_trajectory_components(coordinates, base_seed + 50_000, lambda_=lambda_minus)
 
             action_gradient, weights, perturbations, _ = components_plus
             g_pp.append(
@@ -1463,6 +1618,7 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             "objective": [],
             "validation_objective": [],
             "gradient_norm": [],
+            "sensitivity_fallbacks": [],
             "lambda": [],
             "eta": [],
             "adaptive_step": [],
@@ -1506,6 +1662,7 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             history["train_step_seconds"].append(synchronized_time(self.env.device) - step_started_at)
             history["objective"].append(objective_value)
             history["gradient_norm"].append(gradient_norm_value)
+            history["sensitivity_fallbacks"].append(self.sensitivity_fallbacks)
             history["lambda"].append(self.lambda_)
             history["eta"].append(self.eta)
 

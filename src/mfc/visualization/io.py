@@ -81,6 +81,9 @@ def run_label(metadata):
     eta = metadata.get("eta")
     if eta is not None:
         label += f", eta={eta:g}"
+    components = metadata.get("algorithm_config", {}).get("n_components")
+    if components is not None:
+        label += f", K={components:g}"
     return label
 
 
@@ -97,7 +100,14 @@ def best_runs_by_label(runs, prefer_validation=True):
         eta_key = None if metadata["algorithm"] == "adaptive_transport" else metadata.get("eta")
         if metadata["algorithm"] == "mfqlearning":
             eta_key = metadata.get("algorithm_config", {}).get("simplex_resolution")
-        key = (metadata["algorithm"], metadata["perturbation"], eta_key, metadata["horizon"], metadata["flow"])
+        key = (
+            metadata["algorithm"],
+            metadata["perturbation"],
+            eta_key,
+            metadata["horizon"],
+            metadata["flow"],
+            metadata.get("algorithm_config", {}).get("n_components"),
+        )
         if key not in best or value > best[key][0]:
             best[key] = (value, run)
     return [run for _, run in best.values()]

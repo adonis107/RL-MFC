@@ -21,7 +21,6 @@ class KuramotoConfig:
     action_weight: float = 0.02
     action_scale: float = 2.0
     tau: float = 0.25
-    rho: float = 1.0
     hidden_width: int = 64
     T: int = 20
     T_val: int = 20
@@ -179,48 +178,6 @@ class Kuramoto:
         if order is not None:
             cost = cost + order
         return -cost
-
-    def sample_law_perturbation(self, generator, scale):
-        if scale <= 0.0:
-            raise ValueError("Kuramoto transport scale must be positive.")
-        beta = self.config.rho * torch.randn(2, dtype=self.dtype, device=self.device, generator=generator)
-        zeta = torch.zeros_like(beta)
-        affine_scale = torch.ones_like(beta)
-        return zeta, beta, affine_scale
-
-    def sample_law_perturbation_batch(self, n_particles, generator, scale):
-        if scale <= 0.0:
-            raise ValueError("Kuramoto transport scale must be positive.")
-        beta = self.config.rho * torch.randn(
-            n_particles,
-            2,
-            dtype=self.dtype,
-            device=self.device,
-            generator=generator,
-        )
-        zeta = torch.zeros_like(beta)
-        affine_scale = torch.ones_like(beta)
-        return zeta, beta, affine_scale
-
-    def perturb_law_features(self, law, zeta, beta, scale):
-        # The projection back into the unit disc biases the transport score:
-        # transport_score() uses the score of the Gaussian law + scale * beta,
-        # which is no longer the score of the sampled law once the projection
-        # fires. Because the law norm is the synchronisation level, the clip
-        # rate grows with training, reaching ~50% at r = 0.99 with lambda = 0.1.
-        # It is kept nonetheless: measured against finite-difference directional
-        # derivatives of the deterministic objective, the projected estimator has
-        # a ~13x smaller standard error and tracks the reference more closely
-        # than the unprojected one, whose variance is too large to exploit at any
-        # practical replication count. The resulting bias is documented as a
-        # limitation rather than removed.
-        perturbed = law + scale * beta
-        norm = perturbed.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-        return torch.where(norm > 0.995, 0.995 * perturbed / norm, perturbed)
-
-    def transport_score(self, law, perturbed_law, zeta, beta, affine_scale, scale, sensitivity):
-        coefficient = (perturbed_law - law) / (scale**2 * self.config.rho**2)
-        return (coefficient.unsqueeze(-1) * sensitivity).sum(dim=-2)
 
     def objective(self, policy, lambda_=0.0):
         generator = torch.Generator(device=self.device)
