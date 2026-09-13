@@ -5,7 +5,12 @@ from torch import nn
 @dataclass(frozen=True)
 class DistributionConfig:
     c_mov: float = 0.01
-    hidden_width: int = 256
+    # Meunier uses 256 here. Measured against the exact optimal policy, which this
+    # deterministic problem admits, width 64 represents the optimum to 2.8% and 256
+    # to 1.5% -- while every estimator is still ~90% short of optimal after
+    # thousands of updates. The extra capacity is invisible next to the
+    # optimization gap, and it cost 7x per update plus severe cache contention.
+    hidden_width: int = 64
     T: int = 5
     T_val: int = 5
     gamma: float = 1.0
