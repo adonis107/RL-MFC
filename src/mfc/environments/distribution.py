@@ -92,8 +92,69 @@ class Distribution:
         index = state.unsqueeze(-1).unsqueeze(-1).expand(*state.shape, 1, self.n_actions)
         return torch.gather(probabilities, dim=-2, index=index).squeeze(-2)
 
-    def optimal_policy(self):
-        raise NotImplementedError("No closed-form optimal policy is specified for the distribution environment.")
+    def population_step(self, mu, probabilities):
+        """One step of the exact population recursion under a per-site action law."""
+        flow = mu.unsqueeze(-1) * probabilities
+        moved = (torch.arange(self.n_states, device=self.device).unsqueeze(-1) + self.action_values) % self.n_states
+        return torch.zeros_like(mu).index_add(-1, moved.reshape(-1), flow.reshape(*mu.shape[:-1], -1))
 
-    def optimal_theta(self):
-        raise NotImplementedError("No closed-form optimal policy is specified for the distribution environment.")
+    def population_objective(self, probabilities, initial_distribution=None):
+        """Exact objective of a time-indexed action law, by the deterministic recursion.
+
+        ``probabilities`` has shape (T, n_states, n_actions). Matches the reward
+        functions above: a movement cost weighted by the mass that moves, plus the
+        squared distance of the population to its target at every time.
+        """
+        mu = self.initial_distribution if initial_distribution is None else initial_distribution
+        absolute_move = self.action_values.abs().to(self.dtype)
+        total = torch.zeros((), dtype=self.dtype, device=self.device)
+        for t in range(self.config.T):
+            step = probabilities[t]
+            total = total - (mu - self.target_distribution).square().sum()
+            total = total - self.config.c_mov * (mu * (step * absolute_move).sum(-1)).sum()
+            mu = self.population_step(mu, step)
+        return total - (mu - self.target_distribution).square().sum()
+
+    def optimal_theta(self, initial_distribution=None, steps=4000, lr=0.05):
+        """Optimal action law from a given initial distribution.
+
+        There is no closed form, but there does not need to be one: the transition
+        is deterministic and every term of the objective is differentiable, so the
+        optimal open-loop control is optimal outright and is recovered by gradient
+        ascent on the action logits. Returns probabilities of shape
+        (T, n_states, n_actions). Evaluation only; never used during training.
+        """
+        law = self.initial_distribution if initial_distribution is None else initial_distribution
+        key = (int(self.config.T), float(self.config.c_mov), tuple(law.tolist()), steps)
+        cached = getattr(self, "_optimal_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+
+        logits = torch.zeros(
+            self.config.T, self.n_states, self.n_actions,
+            dtype=self.dtype, device=self.device, requires_grad=True,
+        )
+        optimizer = torch.optim.Adam([logits], lr=lr)
+        for _ in range(steps):
+            optimizer.zero_grad()
+            (-self.population_objective(torch.softmax(logits, dim=-1), law)).backward()
+            optimizer.step()
+
+        theta = torch.softmax(logits.detach(), dim=-1)
+        self._optimal_cache = (key, theta)
+        return theta
+
+    def optimal_policy(self, initial_distribution=None):
+        """The optimal control as a callable ``(t, mu) -> action probabilities``."""
+        theta = self.optimal_theta(initial_distribution)
+
+        def policy(t, mu):
+            index = int(t.item()) if torch.is_tensor(t) else int(t)
+            step = theta[min(index, theta.shape[0] - 1)]
+            return step.expand(*mu.shape[:-1], *step.shape) if mu.ndim > 1 else step
+
+        return policy
+
+    def optimal_objective(self, initial_distribution=None):
+        """Best achievable objective, the reference point for an optimality gap."""
+        return self.population_objective(self.optimal_theta(initial_distribution), initial_distribution)

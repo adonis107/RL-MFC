@@ -56,6 +56,11 @@ MAIN_HORIZON = {
 REFERENCE_OPTIMUM = {
     ("twostate", 2): -3.360,
     ("twostate", 5): -2.640,
+    # Distribution planning has no closed form, but its dynamics are deterministic
+    # and its objective differentiable, so the optimum is solved directly by
+    # Distribution.optimal_objective() and verified against the exact population
+    # recursion. Reported methods plateau near -0.11, so this gap is real.
+    ("distribution", 5): -0.056991,
 }
 
 
@@ -63,12 +68,12 @@ REFERENCE_OPTIMUM = {
 # Main and auxiliary trajectory counts of the fixed-scale transport runs, read from the
 # saved algorithm configuration of each benchmark at its headline configuration.
 TRANSPORT_ALLOCATION = {
-    "twostate": (248, 12),
-    "cybersecurity": (184, 20),
-    "distribution": (496, 64),
-    "advertising": (248, 12),
-    "lq": (201, 20),
-    "portfolio": (311, 200),
+    "twostate": (219, 11),
+    "cybersecurity": (153, 51),
+    "distribution": (280, 280),
+    "advertising": (195, 65),
+    "lq": (111, 160),
+    "portfolio": (211, 700),
 }
 
 
