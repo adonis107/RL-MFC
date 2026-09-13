@@ -9,7 +9,7 @@ from torch import nn
 from .mfreinforce import MFReinforce
 from .mixture import GaussianMixture, MixtureConstraints
 from .reinforce import exact_continuous_validation_objective
-from .timing import synchronized_time
+from .timing import report_progress, synchronized_time
 
 
 _SAMPLE_TIME_ARGUMENT = {}
@@ -613,6 +613,7 @@ class AdaptiveDiscreteTransport(DiscreteTransport):
             history["gradient_norm"].append(gradient_norm_value)
             history["lambda"].append(self.lambda_)
             history["eta"].append(self.eta)
+            report_progress(episode, self.n_train, history)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)
@@ -1376,6 +1377,7 @@ class ContinuousTransport:
             history["objective"].append(objective_value)
             history["gradient_norm"].append(gradient_norm_value)
             history["sensitivity_fallbacks"].append(self.sensitivity_fallbacks)
+            report_progress(episode, self.n_train, history)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)
@@ -1665,6 +1667,7 @@ class AdaptiveContinuousTransport(ContinuousTransport):
             history["sensitivity_fallbacks"].append(self.sensitivity_fallbacks)
             history["lambda"].append(self.lambda_)
             history["eta"].append(self.eta)
+            report_progress(episode, self.n_train, history)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)

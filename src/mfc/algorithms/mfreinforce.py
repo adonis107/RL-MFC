@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from .discrete_validation import evaluate_initial_distributions, evaluate_law, mean_field_next_law
-from .timing import synchronized_time
+from .timing import report_progress, synchronized_time
 
 
 @dataclass(frozen=True)
@@ -500,6 +500,7 @@ class MFReinforce:
 
             history["objective"].append(objective_value)
             history["gradient_norm"].append(gradient_norm_value)
+            report_progress(episode, self.n_train, history)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)

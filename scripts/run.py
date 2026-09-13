@@ -20,9 +20,18 @@ CONTINUOUS_REFERENCE = {
     "kuramoto": {"n_particles": 500, "n_gradient": 1},
 }
 
-# Mixture sizes compared on the continuous benchmarks. The population law decides
-# how many components are identified, so K is swept rather than assumed.
-CONTINUOUS_COMPONENTS = (1, 2, 3)
+# Mixture sizes compared on each continuous benchmark. The population law decides
+# how many components are identified, so K is swept rather than assumed; where the
+# sweep has already been run and settled, only the retained K is kept.
+CONTINUOUS_COMPONENTS = {
+    "lq": (1, 2, 3),
+    # Portfolio's law is close to a single Gaussian: only about a third of the
+    # K=3 chart survives the identification floor, and K=1 closed the optimality
+    # gap fastest in a truncated run. K=2 and K=3 can be added later without
+    # rerunning anything, since resume skips completed jobs.
+    "portfolio": (1,),
+    "kuramoto": (1, 2, 3),
+}
 
 TRANSPORT_LAMBDAS = (0.05, 0.1, 0.2, 0.4, 0.8)
 TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
@@ -77,8 +86,9 @@ def job(env, algorithm, horizon, flow="exact", perturbation=None, eta=None, n_co
     }
 
 
-def continuous_transport_jobs(env, horizon, lambdas, components=CONTINUOUS_COMPONENTS):
+def continuous_transport_jobs(env, horizon, lambdas, components=None):
     """Transport arm of a continuous benchmark: the perturbation grid times the mixture sizes."""
+    components = CONTINUOUS_COMPONENTS[env] if components is None else components
     return [
         job(env, "transport", horizon, flow="particle", perturbation=lambda_,
             eta=DEFAULT_TRANSPORT_ETA, n_components=k)

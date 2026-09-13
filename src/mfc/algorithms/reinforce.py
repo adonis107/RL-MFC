@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from .discrete_validation import evaluate_initial_distributions, mean_field_next_law
-from .timing import synchronized_time
+from .timing import report_progress, synchronized_time
 
 
 def exact_continuous_validation_objective(env, policy):
@@ -242,6 +242,7 @@ class Reinforce:
 
             history["objective"].append(objective_value)
             history["loss"].append(loss_value)
+            report_progress(episode, self.n_train, history)
 
             if self.validation_interval and (episode + 1) % self.validation_interval == 0:
                 validation_started_at = synchronized_time(self.env.device)
