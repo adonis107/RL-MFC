@@ -68,7 +68,9 @@ REFERENCE_OPTIMUM = {
 # Main and auxiliary trajectory counts of the fixed-scale transport runs, read from the
 # saved algorithm configuration of each benchmark at its headline configuration.
 TRANSPORT_ALLOCATION = {
-    "twostate": (219, 11),
+    # Headline two-state horizon is T = 5 (MAIN_HORIZON), whose split is (248, 12);
+    # the T = 2 grid runs at (219, 11).
+    "twostate": (248, 12),
     "cybersecurity": (153, 51),
     "distribution": (280, 280),
     "advertising": (195, 65),
