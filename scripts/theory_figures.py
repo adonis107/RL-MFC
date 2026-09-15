@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DISPLAY = {"twostate": "Two-state", "cybersecurity": "Cybersecurity", "distribution": "Distribution",
            "advertising": "Advertising", "lq": "Linear\u2013quadratic", "portfolio": "Portfolio"}
-ORDER = ["lq", "portfolio", "twostate", "cybersecurity", "distribution", "advertising"]
+ORDER = ["lq", "portfolio", "twostate", "distribution", "cybersecurity", "advertising"]
 # Categorical slots 1-6 of the reference palette, in their documented order.
 COLOR = dict(zip(ORDER, ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]))
 # Identity is carried by marker and line style as well as hue, for print and CVD.

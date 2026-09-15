@@ -27,18 +27,22 @@ OPTIMAL = "#52514e"
 GRID, INK, MUTED = "#d8d7d2", "#0b0b0b", "#52514e"
 
 RUNS = {
-    "Two-state": {"dir": "twostate", "optimum": -2.640, "runs": {
-        "REINFORCE": "reinforce_none_T_5_exact", "MF-REINFORCE": None,
-        "Transport": "transport_lambda_0.1_eta_0.95_T_5_exact"}},
-    "Distribution": {"dir": "distribution", "optimum": -0.056991, "runs": {
-        "REINFORCE": "reinforce_none_T_5_exact", "MF-REINFORCE": "mfreinforce_eps_2_T_5_exact",
-        "Transport": None}},
     "Linear--quadratic": {"dir": "lq", "optimum": -7.223777, "runs": {
         "REINFORCE": "reinforce_none_T_20_exact", "MF-REINFORCE": None,
         "Transport": "transport_lambda_0.1_eta_0.85_K_3_T_20_particle"}},
+
     "Portfolio": {"dir": "portfolio", "optimum": -13.153766, "runs": {
         "REINFORCE": "reinforce_none_T_10_exact", "MF-REINFORCE": None,
         "Transport": "transport_lambda_0.4_eta_0.85_K_1_T_10_particle"}},
+
+    "Two-state": {"dir": "twostate", "optimum": -2.640, "runs": {
+        "REINFORCE": "reinforce_none_T_5_exact", "MF-REINFORCE": None,
+        "Transport": "transport_lambda_0.1_eta_0.95_T_5_exact"}},
+
+    "Distribution": {"dir": "distribution", "optimum": -0.056991, "runs": {
+        "REINFORCE": "reinforce_none_T_5_exact", "MF-REINFORCE": "mfreinforce_eps_2_T_5_exact",
+        "Transport": None}},
+
 }
 # Runs living outside results/<env>, after the tuning reruns.
 OVERRIDE = {
@@ -135,51 +139,22 @@ def learned_versus_optimal(output):
 
     # The linear-quadratic benchmark is omitted: every policy drives its mean to zero and
     # its variance to the same stationary value, so the population flow does not separate them.
-    figure, axes = plt.subplots(1, 3, figsize=(5.5, 1.95), constrained_layout=True)
+    figure, axes = plt.subplots(1, 3, figsize=(5.5, 2.05), constrained_layout=True)
 
-    for ax, (title, env, runs, label) in [
-        (axes[0], ("Portfolio: mean wealth flow", Portfolio(PortfolioConfig(T=10)), {
-            "Transport": "results/portfolio/transport_lambda_0.4_eta_0.85_K_1_T_10_particle_seed_0",
-            "REINFORCE": "results/portfolio/reinforce_none_T_10_exact_seed_0"}, r"$\bar x(\mu_t^\theta)$")),
-    ]:
+    env = Portfolio(PortfolioConfig(T=10))
+    with torch.no_grad():
+        optimal, _ = env.moment_flow(env.optimal_policy(), lambda_=0.0)
+    steps = np.arange(optimal.numel())
+    axes[0].plot(steps, optimal.numpy(), color=OPTIMAL, linewidth=1.0, dashes=(3, 2), label=r"$\theta^\star$")
+    for method, path in {"Transport": "results/portfolio/transport_lambda_0.4_eta_0.85_K_1_T_10_particle_seed_0",
+                         "REINFORCE": "results/portfolio/reinforce_none_T_10_exact_seed_0"}.items():
         with torch.no_grad():
-            optimal, _ = env.moment_flow(env.optimal_policy(), lambda_=0.0)
-        steps = np.arange(optimal.numel())
-        ax.plot(steps, optimal.numpy(), color=OPTIMAL, linewidth=1.0, dashes=(3, 2), label=r"$\theta^\star$")
-        for method, path in runs.items():
-            with torch.no_grad():
-                flow, _ = env.moment_flow(tensor_policy(ROOT / path), lambda_=0.0)
-            ax.plot(steps, flow.numpy(), color=METHOD_COLOR[method], linewidth=1.2, label=method)
-        ax.set_title(title, fontsize=8, color=INK, pad=3)
-        ax.set_xlabel("$t$", fontsize=7.5)
-        ax.set_ylabel(label, fontsize=7.5)
-        ax.legend(frameon=False, fontsize=6.5, loc="lower left", borderaxespad=0.1)
-        style(ax)
-
-    env = Distribution(DistributionConfig())
-    states = np.arange(env.n_states)
-    axes[1].plot(states, env.target_distribution.numpy(), color=OPTIMAL, linewidth=1.0,
-                    dashes=(3, 2), label="target")
-    for method, (folder, stem) in {
-        "Transport": ("results/tuned_scales/distribution", "transport_lambda_0.2_eta_0.98_T_5_exact"),
-        "MF-REINFORCE": ("results/distribution", "mfreinforce_eps_2_T_5_exact"),
-        "REINFORCE": ("results/distribution", "reinforce_none_T_5_exact"),
-    }.items():
-        policy = DistributionPolicy(env.config)
-        blob = torch.load(ROOT / folder / f"{stem}_seed_0" / "policy.pt", map_location="cpu", weights_only=False)
-        policy.load_state_dict(blob["state_dict"])
-        law = env.initial_distribution.clone()
-        with torch.no_grad():
-            for t in range(env.config.T):
-                law = env.population_step(law, policy(torch.tensor(float(t)), law))
-        axes[1].plot(states, law.numpy(), color=METHOD_COLOR[method], linewidth=1.1,
-                        marker=METHOD_MARKER[method], markersize=3.0, label=method)
-    axes[1].set_title(r"Distribution: terminal law $\mu_T^\theta$", fontsize=8, color=INK, pad=3)
-    axes[1].set_xlabel("state", fontsize=7.5)
-    axes[1].set_ylabel(r"$\mu_T^\theta(x)$", fontsize=7.5)
-    axes[1].legend(frameon=False, fontsize=6.5, loc="upper left", borderaxespad=0.1)
-    axes[1].set_ylim(top=axes[1].get_ylim()[1] * 1.45)
-    style(axes[1])
+            flow, _ = env.moment_flow(tensor_policy(ROOT / path), lambda_=0.0)
+        axes[0].plot(steps, flow.numpy(), color=METHOD_COLOR[method], linewidth=1.2, label=method)
+    axes[0].set_title("Portfolio: mean wealth flow", fontsize=8, color=INK, pad=3)
+    axes[0].set_xlabel("$t$", fontsize=7.5)
+    axes[0].set_ylabel(r"$\bar x(\mu_t^\theta)$", fontsize=7.5)
+    style(axes[0])
 
     env = TwoState(TwoStateConfig(T=5))
     runs = {"Transport": "results/twostate/transport_lambda_0.1_eta_0.95_T_5_exact_seed_0",
@@ -187,7 +162,7 @@ def learned_versus_optimal(output):
             "REINFORCE": "results/twostate/reinforce_none_T_5_exact_seed_0"}
     steps = np.arange(env.config.T + 1)
     for name, theta in [(r"$\theta^\star$", env.optimal_theta())] + [
-            (m, tensor_policy(ROOT / p)) for m, p in runs.items()]:
+            (m, tensor_policy(ROOT / q)) for m, q in runs.items()]:
         law = env.initial_distribution.clone()
         trace = [float(law[1])]
         with torch.no_grad():
@@ -196,13 +171,42 @@ def learned_versus_optimal(output):
                 trace.append(float(law[1]))
         colour = OPTIMAL if name.startswith("$") else METHOD_COLOR[name]
         dashes = (3, 2) if name.startswith("$") else (None, None)
-        axes[2].plot(steps, trace, color=colour, linewidth=1.1, dashes=dashes, label=name)
-    axes[2].set_title(r"Two-state: population flow", fontsize=8, color=INK, pad=3)
-    axes[2].set_xlabel("$t$", fontsize=7.5)
-    axes[2].set_ylabel(r"$\mu_t^\theta(1)$", fontsize=7.5)
-    axes[2].legend(frameon=False, fontsize=6.5, loc="best")
+        axes[1].plot(steps, trace, color=colour, linewidth=1.1, dashes=dashes, label=name)
+    axes[1].set_title("Two-state: population flow", fontsize=8, color=INK, pad=3)
+    axes[1].set_xlabel("$t$", fontsize=7.5)
+    axes[1].set_ylabel(r"$\mu_t^\theta(1)$", fontsize=7.5)
+    style(axes[1])
+
+    env = Distribution(DistributionConfig())
+    states = np.arange(env.n_states)
+
+    def terminal(policy):
+        law = env.initial_distribution.clone()
+        with torch.no_grad():
+            for t in range(env.config.T):
+                law = env.population_step(law, policy(t, law))
+        return law.numpy()
+
+    axes[2].plot(states, terminal(env.optimal_policy()), color=OPTIMAL, linewidth=1.0,
+                 dashes=(3, 2), label=r"$\theta^\star$")
+    for method, (folder, stem) in {
+        "Transport": ("results/tuned_scales/distribution", "transport_lambda_0.2_eta_0.98_T_5_exact"),
+        "MF-REINFORCE": ("results/distribution", "mfreinforce_eps_2_T_5_exact"),
+        "REINFORCE": ("results/distribution", "reinforce_none_T_5_exact"),
+    }.items():
+        module = DistributionPolicy(env.config)
+        blob = torch.load(ROOT / folder / f"{stem}_seed_0" / "policy.pt", map_location="cpu", weights_only=False)
+        module.load_state_dict(blob["state_dict"])
+        axes[2].plot(states, terminal(lambda t, mu: module(torch.tensor(float(t)), mu)),
+                     color=METHOD_COLOR[method], linewidth=1.1, marker=METHOD_MARKER[method],
+                     markersize=3.0, label=method)
+    axes[2].set_title(r"Distribution: terminal law", fontsize=8, color=INK, pad=3)
+    axes[2].set_xlabel("state", fontsize=7.5)
+    axes[2].set_ylabel(r"$\mu_T^\theta(x)$", fontsize=7.5)
     style(axes[2])
 
+    handles, labels = axes[1].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="outside lower center", ncol=4, frameon=False, handlelength=1.8)
     figure.savefig(output, bbox_inches="tight")
     figure.savefig(Path(output).with_suffix(".png"), dpi=200, bbox_inches="tight")
 
