@@ -158,9 +158,7 @@ class Portfolio:
         if self.config.mean_field_penalty == 0.0:
             return theta
 
-        # The running mean-field penalty leaves the optimal k_t unchanged, since k_t
-        # enters only through the variance recursion. The objective stays quadratic and
-        # concave in ell, so grad_ell J is affine and the optimum solves a linear system.
+        # The mean-field penalty only changes the intercept; solve its quadratic system.
         theta[:, 1] = 0.0
         base = self.exact_gradient(theta, lambda_=0.0)[:, 1]
         hessian = torch.empty(self.config.T, self.config.T, dtype=self.dtype, device=self.device)

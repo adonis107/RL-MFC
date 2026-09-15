@@ -15,7 +15,6 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Kuramoto is excluded: it is discussed only as a possible future benchmark.
 ENVIRONMENTS = ["twostate", "cybersecurity", "distribution", "advertising", "lq", "portfolio"]
 
 DISPLAY_NAME = {
@@ -28,9 +27,6 @@ DISPLAY_NAME = {
     "kuramoto": "Kuramoto",
 }
 
-# Population-flow mode used in the headline comparison of each benchmark. The
-# continuous benchmarks fit the Gaussian-mixture coordinate to a population
-# particle block, so there is no exact-flow arm to compare against there.
 MAIN_FLOW = {
     "twostate": "exact",
     "cybersecurity": "exact",
@@ -50,26 +46,15 @@ MAIN_HORIZON = {
     "portfolio": 10,
 }
 
-# Reference optima, in the sign convention of the reported validation objective.
-# The two-state values are the exact recursion evaluated at the closed-form optimal
-# policy from the fixed validation law; the others come from ``J0_star``.
 REFERENCE_OPTIMUM = {
     ("twostate", 2): -3.360,
     ("twostate", 5): -2.640,
-    # Distribution planning has no closed form, but its dynamics are deterministic
-    # and its objective differentiable, so the optimum is solved directly by
-    # Distribution.optimal_objective() and verified against the exact population
-    # recursion. Reported methods plateau near -0.11, so this gap is real.
     ("distribution", 5): -0.056991,
 }
 
 
 
-# Main and auxiliary trajectory counts of the fixed-scale transport runs, read from the
-# saved algorithm configuration of each benchmark at its headline configuration.
 TRANSPORT_ALLOCATION = {
-    # Headline two-state horizon is T = 5 (MAIN_HORIZON), whose split is (248, 12);
-    # the T = 2 grid runs at (219, 11).
     "twostate": (248, 12),
     "cybersecurity": (153, 51),
     "distribution": (280, 280),
@@ -125,7 +110,6 @@ def selection(grouped, env, horizon=None, flow=None):
     horizon = MAIN_HORIZON[env] if horizon is None else horizon
     flow = MAIN_FLOW[env] if flow is None else flow
     subset = grouped[grouped["horizon"] == horizon]
-    # REINFORCE never uses a perturbed population flow, so it is always stored as exact.
     subset = subset[(subset["flow"] == flow) | (subset["method"] == "reinforce")]
     best = {}
     for method, rows in subset.groupby("method"):
@@ -325,8 +309,6 @@ def twostate_horizon(figures_root):
         for horizon in (2, 5):
             best = selection(grouped, "twostate", horizon=horizon, flow="exact")[method]
             optimum = REFERENCE_OPTIMUM[("twostate", horizon)]
-            # Per-seed gap: the optimum is a deterministic constant, so all the
-            # dispersion below comes from the learned policy.
             seeds = objectives[
                 (objectives["label"] == best["label"])
                 & (objectives["flow"] == "exact")
@@ -980,7 +962,6 @@ def reallocation(figures_root, results_root=None):
     from mfc.visualization import load_runs
     from mfc.visualization.io import validation_dataframe
 
-    # (benchmark, lambda, default split, reallocated split, iteration at which both are read)
     settings = [
         ("distribution", 0.4, (549, 11), (200, 360), 5_000),
         ("advertising", 0.1, (248, 12), (100, 160), 10_000),
@@ -1078,7 +1059,6 @@ def main():
     for env in ENVIRONMENTS:
         tables[f"full_objectives_{env}"] = full_objectives(args.figures_root, env)
         if env in {"distribution", "cybersecurity"}:
-            # The other benchmarks carry a more specific table of their own.
             tables[f"summary_{env}"] = benchmark_summary(args.figures_root, env)
 
     for env in ["lq", "portfolio"]:
@@ -1086,8 +1066,6 @@ def main():
         if diagnostics is not None:
             tables[f"gradient_diagnostics_{env}"] = diagnostics
 
-    # Kuramoto is not a reported benchmark, but it is the one continuous law that
-    # identifies more than one mixture component, so its sweep is emitted too.
     for env in ["lq", "portfolio", "kuramoto"]:
         identification = mixture_identification_table(args.figures_root, env)
         if identification is not None:

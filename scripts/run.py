@@ -20,15 +20,8 @@ CONTINUOUS_REFERENCE = {
     "kuramoto": {"n_particles": 500, "n_gradient": 1},
 }
 
-# Mixture sizes compared on each continuous benchmark. The population law decides
-# how many components are identified, so K is swept rather than assumed; where the
-# sweep has already been run and settled, only the retained K is kept.
 CONTINUOUS_COMPONENTS = {
     "lq": (1, 2, 3),
-    # Portfolio's law is close to a single Gaussian: only about a third of the
-    # K=3 chart survives the identification floor, and K=1 closed the optimality
-    # gap fastest in a truncated run. K=2 and K=3 can be added later without
-    # rerunning anything, since resume skips completed jobs.
     "portfolio": (1,),
     "kuramoto": (1, 2, 3),
 }
@@ -36,40 +29,15 @@ CONTINUOUS_COMPONENTS = {
 TRANSPORT_LAMBDAS = (0.05, 0.1, 0.2, 0.4, 0.8)
 TWOSTATE_TRANSPORT_ETAS = (0.4, 0.6, 0.85, 0.95)
 DEFAULT_TRANSPORT_ETA = 0.85
-# Reallocate a fixed transport budget toward the auxiliary sensitivity estimate
-# where n=1 is too noisy; trajectory particles are reduced to keep cost equal.
-# Auxiliary trajectories of the discrete transport arm, the n of T(n + B). These
-# were measured the same way as the continuous splits, against the exact
-# population recursion at 120 replications: the earlier values starved the
-# sensitivity block on every benchmark whose policy is a network. Raising n
-# lowers the dispersion by 4.2x on distribution, 2.0x on advertising and 1.65x on
-# cybersecurity, at the same budget and with an interior optimum in each case.
-# Two-state keeps the proportional allocation: its policy has two parameters, so
-# its auxiliary block was never the constraint.
 TRANSPORT_AUXILIARY_GRADIENTS = {
     "cybersecurity": 51,
     "distribution": 280,
     "advertising": 65,
 }
 
-# Split of the matched continuous budget T(M + n + B) between the population
-# block M, the auxiliary block n, and the main trajectories B. M and n are stated
-# and B takes the remainder, so changing one of them cannot silently change what
-# the arm costs. The auxiliary block estimates a q_K by d_theta matrix from n
-# trajectories and the sensitivity recursion amplifies its error once per time
-# step, which is why n has to grow with the number of policy parameters.
-# Each split was chosen by measuring candidate splits of the fixed budget against
-# the benchmark's gradient oracle at 120 replications, scoring them by the
-# mean-square error per update. The auxiliary block is the one that pays: raising
-# n lowers the dispersion and the bias together, the latter because D = -A^-1 B
-# inverts a noisy matrix and that ratio bias shrinks as B is better estimated.
 CONTINUOUS_SPLIT = {
     "lq": {"population": 150, "auxiliary": 160},
     "portfolio": {"population": 100, "auxiliary": 700},
-    # Measured at matched budget over 120 replications: this split cuts the
-    # dispersion by 28% at K=1, 38% at K=2 and 69% at K=3 against an even split
-    # of (500, 200, 321), and the squared bias it buys back is under 4% of the
-    # mean-square error at every K.
     "kuramoto": {"population": 200, "auxiliary": 400},
 }
 

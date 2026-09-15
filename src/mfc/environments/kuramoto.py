@@ -140,16 +140,7 @@ class Kuramoto:
         return torch.sqrt((c.square() + s.square()).clamp_min(1e-12))
 
     def order_deviation_cost(self, law, weight):
-        # Optional population-level penalty steering the order parameter towards a
-        # target level of synchronisation. With order_target < 1 the individual and
-        # the collective incentives disagree, which makes the mean-field correction
-        # non-collinear with the policy-score term; at weight 0 the two coincide up
-        # to a positive factor and a scale-invariant optimizer cannot distinguish
-        # them. The default is 0: with weight 10 the objective is dominated by the
-        # penalty and every estimator, REINFORCE included, degrades monotonically
-        # from the first validation onwards, so the benchmark stops being
-        # informative. The coefficient is retained for the ablation of
-        # Section~\ref{sec:correction-alignment}.
+        # Optional ablation penalty; the default zero value keeps the benchmark informative.
         if weight == 0.0:
             return None
         return weight * (self.order_parameter(law) - self.config.order_target).square()

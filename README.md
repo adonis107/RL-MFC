@@ -1,56 +1,74 @@
-# MFC
+# MFC Transport REINFORCE
 
-Mean-field control experiments comparing REINFORCE, MF-REINFORCE, and transport-gradient estimators across discrete and continuous benchmark environments.
+Code for mean-field control experiments comparing:
 
-## Layout
+- REINFORCE
+- MF-REINFORCE
+- Transport REINFORCE
+- tabular mean-field Q-learning on cybersecurity
 
-- `src/mfc/environments/`: benchmark environments such as TwoState, Advertising, LQ, and Portfolio.
-- `src/mfc/algorithms/`: estimator and training implementations.
-- `src/mfc/visualization/`: result loading, plots, objective tables, and gradient diagnostics.
-- `scripts/train.py`: run one training job.
-- `scripts/run.py`: launch experiment grids.
-- `scripts/plot.py`: build CSV summaries and plots from saved runs.
-
-## Quick Start
-
-Run a small training job:
+## Setup
 
 ```bash
-uv run python scripts/train.py --env lq --algorithm transport --horizon 20 --perturbation 0.2 --n-train 10 --device cpu
+uv sync
 ```
 
-## Continuous-state transport
+Run commands from the repository root.
 
-The continuous estimator represents the population law by a `K`-component Gaussian mixture fitted
-to a block of population particles, perturbs the mixture coordinates, and corrects the policy
-gradient by the sensitivity of those coordinates to the policy parameters. Set `K` with
-`--n-components` (default 3). `--flow exact` is a single-Gaussian oracle that reads the population
-flow from an environment's analytic moments instead of fitting it, and is only available with
-`--n-components 1`.
+## Repository layout
 
-The mixture is only identified when the population law really needs `K` components: otherwise the
-likelihood is flat along a reparametrization of the chart, and `jacobian_floor` drops those
-directions from the sensitivity solve (they are counted per update under `sensitivity_fallbacks`).
-To choose `K` from measurements rather than by assumption, sweep it at a saved policy:
+- `src/mfc/environments/`: benchmark environments.
+- `src/mfc/algorithms/`: training and gradient estimators.
+- `src/mfc/visualization/`: result loading, plots, tables, and diagnostics.
+- `scripts/`: training, plotting, and report-generation scripts.
+- `results/`: saved experiment outputs.
+
+## Run one experiment
 
 ```bash
-uv run python scripts/plot.py --env lq --results-root results --output-root results/figures --identification-replications 20
+uv run python scripts/train.py \
+  --env lq \
+  --algorithm transport \
+  --horizon 20 \
+  --perturbation 0.1 \
+  --n-train 10000 \
+  --device cpu
 ```
 
-which writes `mixture_identification.csv`: the condition number of the score Jacobian, the share of
-chart directions the floor retains, and the dispersion and bias of the estimator, for each `K` and
-each floor.
+Common environments are `twostate`, `cybersecurity`, `distribution`, `advertising`, `lq`, and `portfolio`.
 
-Generate plots and diagnostic tables from a results directory:
+## Run the full suite
 
 ```bash
-uv run python scripts/plot.py --env all --results-root results --output-root results/plots
+scripts/run_suite.sh
 ```
 
-For low-SNR Portfolio gradient diagnostics, raise the diagnostic particle count without changing the training budget:
+Useful overrides:
 
 ```bash
-uv run python scripts/plot.py --env portfolio --results-root results --output-root results/plots --gradient-replications 20 --gradient-particles 8192
+WORKERS=4 scripts/run_suite.sh
+RESULTS_ROOT=results_new scripts/run_suite.sh
+scripts/run_suite.sh --no-resume
 ```
 
-Generated experiment outputs are written under `results/` by default.
+## Build plots and tables
+
+```bash
+uv run python scripts/plot.py \
+  --env all \
+  --results-root results \
+  --output-root results/figures
+```
+
+Report-specific figures and tables:
+
+```bash
+uv run python scripts/report_figures.py --results-root results --output-root results/figures
+uv run python scripts/report_tables.py --results-root results --output-root results/tables
+```
+
+Theory-verification figure:
+
+```bash
+uv run python scripts/verify_theory.py --part all
+```

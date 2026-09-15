@@ -5,22 +5,15 @@ from torch import nn
 @dataclass(frozen=True)
 class DistributionConfig:
     c_mov: float = 0.01
-    # Meunier uses 256 here. Measured against the exact optimal policy, which this
-    # deterministic problem admits, width 64 represents the optimum to 2.8% and 256
-    # to 1.5% -- while every estimator is still ~90% short of optimal after
-    # thousands of updates. The extra capacity is invisible next to the
-    # optimization gap, and it cost 7x per update plus severe cache contention.
     hidden_width: int = 64
     T: int = 5
     T_val: int = 5
     gamma: float = 1.0
-    # Reduced after convergence checks for the configured epsilon/lambda grid.
     n_train: int = 30_000
     lr: float = 1e-4
     n_particles: int = 500
     n_logit_gradient: int = 64
     validation_interval: int = 10
-    # Intentionally different from the paper description to match the actual experiment 
     target_distribution: tuple[float, ...] = (0.02, 0.04, 0.09, 0.16, 0.19, 0.19, 0.16, 0.09, 0.04, 0.02)
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 

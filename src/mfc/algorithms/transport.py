@@ -888,10 +888,6 @@ class ContinuousTransport:
     def initial_states(self, n_particles, generator):
         return self.env.sample_initial(n_particles, generator)
 
-    # ------------------------------------------------------------------
-    # Population argument decoded from a mixture coordinate
-    # ------------------------------------------------------------------
-
     def particle_coordinates(self, states):
         """Particle states as a (M, d) matrix, whatever shape the environment uses."""
         return states.reshape(states.shape[0], self.state_dim)
@@ -926,10 +922,6 @@ class ContinuousTransport:
     def population_law(self, z):
         """Population argument handed to the environment for the mixture Gamma_K(z)."""
         return self.law_argument(self.law_features(z))
-
-    # ------------------------------------------------------------------
-    # Simulator access
-    # ------------------------------------------------------------------
 
     def sample_action(self, t, state, law, generator):
         with torch.no_grad():
@@ -982,10 +974,6 @@ class ContinuousTransport:
         return torch.randn(
             *shape, self.coordinate_dim, dtype=self.env.dtype, device=self.env.device, generator=generator
         )
-
-    # ------------------------------------------------------------------
-    # Block 1: population coordinates
-    # ------------------------------------------------------------------
 
     def population_coordinates(self, horizon=None, seed=None, jacobians=True):
         """Fit the mixture coordinate along the represented flow.
@@ -1066,10 +1054,6 @@ class ContinuousTransport:
                 )
 
         return coordinates, score_jacobians
-
-    # ------------------------------------------------------------------
-    # Block 2: population sensitivity D_t = grad_theta z_t
-    # ------------------------------------------------------------------
 
     def solve_sensitivity(self, jacobian, b):
         """D = -A^{-1} B, guarded against a mixture fit that is not locally identified.
@@ -1185,10 +1169,6 @@ class ContinuousTransport:
             sensitivities[target_t] = self.solve_sensitivity(score_jacobians[target_t], b / n_trajectories)
 
         return sensitivities
-
-    # ------------------------------------------------------------------
-    # Block 3: policy gradient
-    # ------------------------------------------------------------------
 
     def coordinate_score(self, perturbation, sensitivity, lambda_):
         """Mean-field correction D_t^T U_t / lambda of one perturbed population argument."""

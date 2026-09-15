@@ -36,7 +36,6 @@ from mfc.visualization.tables import save_table
 
 DISCRETE = ["twostate", "cybersecurity", "distribution", "advertising"]
 
-# Headline horizon and perturbation of each benchmark, matching the reported runs.
 SETTINGS = {
     "twostate": {"horizon": 5, "lambda_": 0.1},
     "cybersecurity": {"horizon": 3, "lambda_": 0.4},
@@ -44,14 +43,10 @@ SETTINGS = {
     "advertising": {"horizon": 5, "lambda_": 0.2},
 }
 
-# Kept deliberately small: eta improves monotonically with diminishing returns and
-# theory only requires eta in (0, 1), while simplex_sigma has an interior optimum
-# whose location is what actually varies between benchmarks.
 ETAS = (0.85, 0.95, 0.98)
 SIGMAS = (0.5, 0.75, 1.0)
 DEFAULT_CELL = (0.85, 1.0)
 
-# Warm starts to try; the one with the largest oracle gradient becomes the reference.
 WARM_STARTS = (0, 100, 200, 500)
 
 
@@ -180,8 +175,6 @@ def report(summary):
             )
         selected[env_name] = (float(best["eta"]), float(best["simplex_sigma"]), unreliable)
 
-    # A benchmark whose screen was flagged unreliable is emitted commented out: its
-    # ranking is between settings that are all noise, and pasting it in would ship that.
     print("\nTRANSPORT_PERTURBATION_SCALES = {")
     for env_name, (eta, sigma, unreliable) in selected.items():
         prefix = "    # " if unreliable else "    "

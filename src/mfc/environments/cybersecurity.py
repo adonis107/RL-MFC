@@ -30,10 +30,7 @@ class CybersecurityConfig:
 
     @property
     def discount(self):
-        # gamma is the discount per unit of time, as in Carmona et al.; the model is a
-        # continuous-time chain sampled at dt, so the per-step factor is gamma ** dt.
-        # Applying gamma directly per step makes the objective depend on dt: at dt=0.2 it
-        # gives a discount rate of -log(gamma)/dt = 3.47 instead of -log(gamma) = 0.69.
+        # gamma is specified per unit time; the sampled chain uses gamma ** dt per step.
         return self.gamma**self.dt
 
 

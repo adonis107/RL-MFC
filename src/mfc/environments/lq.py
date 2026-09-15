@@ -37,11 +37,7 @@ class LQ:
         self.initial_law = torch.tensor([config.mu0, config.Sigma0], dtype=self.dtype, device=self.device)
 
     def sample_initial(self, n_particles, generator):
-        # The initial law is Laplace with mean mu0 and variance Sigma0. Linear
-        # dynamics keep a Gaussian initial law Gaussian at every time, which
-        # leaves a multi-component mixture fit unidentified; a Laplace start makes
-        # the population law genuinely non-Gaussian. The evaluation oracles below
-        # only use the mean and variance recursion, so they are unaffected.
+        # Laplace noise keeps the same mean and variance as the oracle but makes the law non-Gaussian.
         uniform = torch.rand(n_particles, dtype=self.dtype, device=self.device, generator=generator) - 0.5
         scale = (0.5 * self.config.Sigma0) ** 0.5
         magnitude = (1.0 - 2.0 * uniform.abs()).clamp_min(torch.finfo(self.dtype).tiny)

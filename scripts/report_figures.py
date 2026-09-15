@@ -38,7 +38,6 @@ def lq_convergence(results_root, output_path, horizon=20, flow="exact", zoom_fro
 
     figure, (left, right) = plt.subplots(1, 2, figsize=(11, 4.2))
 
-    # Left: the tail of the learning curves, where the estimators actually separate.
     tail = curves[curves["step"] >= zoom_from]
     summary = tail.groupby(["label", "step"], as_index=False)["validation_reward"].agg(["mean", "std"]).reset_index()
     for label, group in summary.groupby("label", sort=False):
@@ -54,7 +53,6 @@ def lq_convergence(results_root, output_path, horizon=20, flow="exact", zoom_fro
     left.grid(alpha=0.25)
     left.legend(frameon=False, fontsize=7, loc="upper right", ncol=2)
 
-    # Right: final gap to the optimum against the perturbation scale.
     transport = objectives[objectives["label"].str.startswith("Transport")].copy()
     transport["lambda"] = transport["label"].str.extract(r"lambda=([\d.]+)").astype(float)
     gaps = transport.groupby("lambda")["J0"].agg(["mean", "std"]).reset_index()

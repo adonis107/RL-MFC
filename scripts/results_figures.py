@@ -20,7 +20,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from mfc.environments import (Distribution, DistributionConfig, DistributionPolicy, LQ, LQConfig,
                               Portfolio, PortfolioConfig, TwoState, TwoStateConfig)
 
-# Categorical slots of the reference palette, assigned to estimators in fixed order.
 METHOD_COLOR = {"REINFORCE": "#eb6834", "MF-REINFORCE": "#eda100", "Transport": "#2a78d6"}
 METHOD_MARKER = {"REINFORCE": "s", "MF-REINFORCE": "D", "Transport": "o"}
 OPTIMAL = "#52514e"
@@ -44,7 +43,6 @@ RUNS = {
         "Transport": None}},
 
 }
-# Runs living outside results/<env>, after the tuning reruns.
 OVERRIDE = {
     ("Two-state", "MF-REINFORCE"): ("results/mfr_tuned_twostate/twostate", "mfreinforce_eps_0.2_T_5_exact"),
     ("Distribution", "Transport"): ("results/tuned_scales/distribution", "transport_lambda_0.2_eta_0.98_T_5_exact"),
@@ -98,8 +96,6 @@ def learning_curves(output):
             if mean is None:
                 continue
             steps = np.arange(1, len(mean) + 1) * 10
-            # The methods span orders of magnitude, so the optimality gap on a log axis
-            # keeps all of them legible; the optimum is the bottom of the axis.
             gap = np.abs(mean - spec["optimum"])
             panel.append(list(gap))
             ax.plot(steps, gap, color=METHOD_COLOR[method], linewidth=1.1, label=method)
@@ -111,8 +107,6 @@ def learning_curves(output):
         tail = [v for c in panel for v in c[max(len(c) // 20, 1):] if v > 0]
         if tail:
             ax.set_ylim(min(tail) * 0.6, max(tail) * 1.6)
-        # Below two decades matplotlib labels the minor ticks in full scientific
-        # notation, which crowds the axis; label a few major ticks plainly instead.
         ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=6))
         ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(compact))
@@ -137,8 +131,6 @@ def learned_versus_optimal(output):
     """
     from mfc.algorithms.discrete_validation import mean_field_next_law
 
-    # The linear-quadratic benchmark is omitted: every policy drives its mean to zero and
-    # its variance to the same stationary value, so the population flow does not separate them.
     figure, axes = plt.subplots(1, 3, figsize=(5.5, 2.05), constrained_layout=True)
 
     env = Portfolio(PortfolioConfig(T=10))

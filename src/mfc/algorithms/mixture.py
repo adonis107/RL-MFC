@@ -69,10 +69,6 @@ class GaussianMixture:
         self.tril_flat = rows * dim + columns
         self.is_diagonal = rows == columns
 
-    # ------------------------------------------------------------------
-    # Decoder Gamma_K
-    # ------------------------------------------------------------------
-
     def unpack(self, z):
         """Split a coordinate into weight logits, means, and covariance factors."""
         n_components, dim = self.n_components, self.dim
@@ -113,17 +109,11 @@ class GaussianMixture:
             [beta, means.reshape(*means.shape[:-2], -1), values.reshape(*values.shape[:-2], -1)], dim=-1
         )
 
-    # ------------------------------------------------------------------
-    # Density, score psi_K, and score Jacobian D_z psi_K
-    # ------------------------------------------------------------------
-
     def component_log_densities(self, x, means, scale_tril):
         """Log Gaussian densities of every component, shaped (*batch, n, K)."""
         difference = x.unsqueeze(-2) - means.unsqueeze(-3)
         log_determinant = torch.log(torch.diagonal(scale_tril, dim1=-2, dim2=-1)).sum(dim=-1)
         if self.dim == 1:
-            # A scalar state space only needs a division, and this is the path
-            # the EM loop and the autograd score take in every benchmark here.
             mahalanobis = (difference.squeeze(-1) / scale_tril[..., 0, 0].unsqueeze(-2)).square()
         else:
             solved = torch.linalg.solve_triangular(
@@ -162,10 +152,6 @@ class GaussianMixture:
 
         return torch.func.jacrev(torch.func.jacrev(mean_log_density))(z)
 
-    # ------------------------------------------------------------------
-    # Moments and quadrature
-    # ------------------------------------------------------------------
-
     def mean_covariance(self, z):
         """Mean vector and covariance matrix of Gamma_K(z)."""
         weights, means, scale_tril = self.decode(z)
@@ -195,10 +181,6 @@ class GaussianMixture:
         combined = weights.unsqueeze(-1) * node_weights
         points = points.reshape(*points.shape[:-3], -1, self.dim)
         return points, combined.reshape(*combined.shape[:-2], -1)
-
-    # ------------------------------------------------------------------
-    # Fitting rule R_K
-    # ------------------------------------------------------------------
 
     def constrain(self, weights, means, covariances):
         """Project mixture parameters onto the fitting set Z_K."""
